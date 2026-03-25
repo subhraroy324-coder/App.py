@@ -4,8 +4,8 @@ import requests, os
 app = Flask(__name__)
 
 # ===== CONFIG =====
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-CHAT_ID = os.environ.get("CHAT_ID", "YOUR_CHAT_ID_HERE")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8262674678:AAGgclAhlRBNnmKnTwxlL_rNJh-eqRaMkTA")
+CHAT_ID = os.environ.get("CHAT_ID", "8363838788")
 
 # ===== FUNCTIONS =====
 def send_to_telegram(text, photo_paths=None):
