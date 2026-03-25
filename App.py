@@ -52,7 +52,7 @@ def get_user(username):
 
     except Exception as e:
         return jsonify({
-            "developer": "Shayan Explorer",
+            "developer": "Shayon Explorer",
             "status": "error",
             "message": str(e)
         })
