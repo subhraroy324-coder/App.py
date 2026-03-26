@@ -6,9 +6,6 @@ import time
 app = Flask(__name__)
 L = instaloader.Instaloader()
 
-# OPTIONAL LOGIN (recommended to avoid 429)
-# L.login("your_username", "your_password")
-
 @app.route('/')
 def home():
     return jsonify({
@@ -26,38 +23,33 @@ def get_user(username):
             "status": "success",
             "profile": {
                 "username": profile.username,
-                "full_name": profile.full_name,
-                "bio": profile.biography,
-                "followers": profile.followers,
-                "following": profile.followees,
-                "posts_count": profile.mediacount
+                "followers": profile.followers
             },
             "posts": []
         }
 
         for i, post in enumerate(profile.get_posts()):
-            if i >= 5:
+            if i >= 3:
                 break
 
             data["posts"].append({
-                "post_url": f"https://www.instagram.com/p/{post.shortcode}/",
+                "url": f"https://www.instagram.com/p/{post.shortcode}/",
                 "likes": post.likes,
-                "comments": post.comments,
-                "caption": post.caption
+                "comments": post.comments
             })
 
-            time.sleep(2)  # prevent 429
+            time.sleep(2)
 
         return jsonify(data)
 
     except Exception as e:
         return jsonify({
-            "developer": "Shayon Explorer",
             "status": "error",
             "message": str(e)
         })
 
-# IMPORTANT FOR RAILWAY
+# ✅ IMPORTANT FIX
+port = int(os.environ.get("PORT", 8000))
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
