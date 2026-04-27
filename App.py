@@ -1,55 +1,71 @@
-from flask import Flask, jsonify
-import instaloader
-import os
+from flask import Flask, request, jsonify
 import time
+import random
+import string
+import os
 
 app = Flask(__name__)
-L = instaloader.Instaloader()
 
-@app.route('/')
+keys_db = {}
+
+def generate_key():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+
+
+@app.route("/")
 def home():
-    return jsonify({
-        "message": "Instagram API is running",
-        "developer": "Shayon Explorer"
-    })
+    return "VERNEX API RUNNING"
 
-@app.route('/user/<username>')
-def get_user(username):
+
+@app.route("/generate")
+def generate():
     try:
-        profile = instaloader.Profile.from_username(L.context, username)
+        days = request.args.get("days")
+        lifetime = request.args.get("lifetime")
 
-        data = {
-            "developer": "Shayon Explorer",
-            "status": "success",
-            "profile": {
-                "username": profile.username,
-                "followers": profile.followers
-            },
-            "posts": []
-        }
+        key = generate_key()
 
-        for i, post in enumerate(profile.get_posts()):
-            if i >= 3:
-                break
+        if lifetime == "true":
+            expiry = None
+            valid = "lifetime"
+        else:
+            days = int(days)
+            expiry = time.time() + (days * 86400)
+            valid = f"{days} days"
 
-            data["posts"].append({
-                "url": f"https://www.instagram.com/p/{post.shortcode}/",
-                "likes": post.likes,
-                "comments": post.comments
-            })
+        keys_db[key] = expiry
 
-            time.sleep(2)
-
-        return jsonify(data)
-
-    except Exception as e:
         return jsonify({
-            "status": "error",
-            "message": str(e)
+            "status": "success",
+            "key": key,
+            "valid": valid,
+            "expiry": expiry
         })
 
-# ✅ IMPORTANT FIX
-port = int(os.environ.get("PORT", 8000))
+    except:
+        return jsonify({"status": "error"})
+
+
+@app.route("/api/numinfo")
+def numinfo():
+    key = request.args.get("key")
+    num = request.args.get("num")
+
+    if key not in keys_db:
+        return jsonify({"status": "error", "message": "Invalid key"})
+
+    expiry = keys_db[key]
+
+    if expiry is not None and time.time() > expiry:
+        return jsonify({"status": "error", "message": "Key expired"})
+
+    return jsonify({
+        "status": "success",
+        "number": num,
+        "message": "Valid key"
+    })
+
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
