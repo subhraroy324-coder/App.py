@@ -2,7 +2,7 @@ const ADMIN_USER = "vernex";
 const ADMIN_PASS = "vernex@16vx";
 const MASTER_API_KEY = "explorer16";
 
-// Persistent global store ensuring keys stay loaded
+// Persistent global memory mapping for keys and traffic logs
 globalThis.SHAYAN_KEYS = globalThis.SHAYAN_KEYS || {
   "vx-osint": { owner: "Master Deployment", expiry: "LIFETIME", limit: 5000, used: 0, tools: ["all"], status: "Active" }
 };
@@ -56,11 +56,11 @@ export default {
       }
 
       if (keyData.used >= keyData.limit) {
-        return Response.json({ error: "Forbidden", message: "API Key limit exhausted." }, { status: 403 });
+        return Response.json({ error: "Forbidden", message: "API Key request limit exhausted." }, { status: 403 });
       }
 
       if (!keyData.tools.includes("all") && !keyData.tools.includes(toolName)) {
-        return Response.json({ error: "Forbidden", message: "Unauthorized tool access." }, { status: 403 });
+        return Response.json({ error: "Forbidden", message: "Unauthorized tool access scope for this key." }, { status: 403 });
       }
 
       if (!TOOLS_MAP[toolName]) {
@@ -76,9 +76,9 @@ export default {
         time: new Date().toISOString().replace('T', ' ').substring(0, 19),
         key: userKey,
         tool: toolName,
-        query: paramVal
+        query: paramVal || "N/A"
       });
-      if (globalThis.SHAYAN_LOGS.length > 50) globalThis.SHAYAN_LOGS.pop();
+      if (globalThis.SHAYAN_LOGS.length > 100) globalThis.SHAYAN_LOGS.pop();
 
       const targetUrl = `${baseUrl}?key=${MASTER_API_KEY}&${paramName}=${encodeURIComponent(paramVal)}`;
 
@@ -96,7 +96,7 @@ export default {
       }
     }
 
-    // --- AUTH ---
+    // --- AUTHENTICATION ---
     const cookie = request.headers.get("Cookie") || "";
     const isLoggedIn = cookie.includes("auth=shayan_verified=true");
 
@@ -148,7 +148,7 @@ export default {
       return Response.redirect(`${url.origin}/`, 302);
     }
 
-    return new HtmlResponse(dashboardHtml(globalThis.SHAYAN_KEYS, globalThis.SHAYAN_LOGS));
+    return new HtmlResponse(dashboardHtml(globalThis.SHAYAN_KEYS, globalThis.SHAYAN_LOGS, url.origin));
   }
 };
 
@@ -176,7 +176,7 @@ function loginPageHtml() {
   </div></body></html>`;
 }
 
-function dashboardHtml(keys, logs) {
+function dashboardHtml(keys, logs, origin) {
   let toolKeys = Object.keys(TOOLS_MAP);
 
   let keyRows = Object.entries(keys).map(([k, d]) => `
@@ -203,6 +203,19 @@ function dashboardHtml(keys, logs) {
       <td><code>${l.query}</code></td>
     </tr>
   `).join('') : `<tr><td colspan="4" style="text-align:center; color:#64748b; padding:20px;">No active request stream metrics tracking currently.</td></tr>`;
+
+  let endpointBoxes = toolKeys.map(t => {
+    let endpointUrl = `${origin}/api/${t}?key=YOUR_KEY&${TOOLS_MAP[t][1]}=VALUE`;
+    return `
+      <div style="background:#05070a; border:1px solid #1e293b; padding:12px; border-radius:8px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <span style="color:#d946ef; font-weight:bold; font-size:12px;">${t.toUpperCase()}</span><br>
+          <code style="font-size:11px; color:#38bdf8;">${endpointUrl}</code>
+        </div>
+        <button onclick="navigator.clipboard.writeText('${endpointUrl}'); alert('Copied endpoint for ${t.toUpperCase()}!');" style="background:#8b5cf6; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;">📋 Copy Endpoint</button>
+      </div>
+    `;
+  }).join('');
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>SHAYAN_EXPLORER HUB</title>
@@ -231,7 +244,7 @@ function dashboardHtml(keys, logs) {
     <header>
       <h1>SHAYAN_EXPLORER HUB</h1>
       <div>
-        <a href="#" class="btn-top" onclick="alert('All 20+ OSINT Endpoints operational.')">VIEW_SYSTEM_APIS</a>
+        <a href="#apis" class="btn-top">VIEW_SYSTEM_APIS</a>
         <a href="/logout" class="btn-top" style="border-color:#7f1d1d;color:#f87171;">LOGOUT</a>
       </div>
     </header>
@@ -283,6 +296,13 @@ function dashboardHtml(keys, logs) {
         <tr><th>Owner Identity</th><th>Authorization Token Key</th><th>Dynamic Expiry</th><th>Usage Velocity</th><th>Status</th><th>Route Scope</th><th>System Controls</th></tr>
         ${keyRows}
       </table>
+    </div>
+
+    <!-- ALL API ENDPOINTS REFERENCE & ONE-CLICK COPY -->
+    <div id="apis" class="section-title">ALL OSINT API ENDPOINTS (ONE-CLICK COPY)</div>
+    <div class="card">
+      <p style="font-size:12px; color:#64748b; margin-top:0;">Click the copy button next to any endpoint to instantly copy your ready-to-use API URL:</p>
+      ${endpointBoxes}
     </div>
 
     <!-- REQUEST LOGS -->
