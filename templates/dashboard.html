@@ -1,0 +1,59 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-speedometer2"></i> Dashboard</h2>
+<div class="row">
+    <div class="col-md-4">
+        <div class="card text-white bg-primary mb-3 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-key"></i> Total Keys</h5>
+                <p class="display-4">{{ total_keys }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card text-white bg-success mb-3 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-check-circle"></i> Active Keys</h5>
+                <p class="display-4">{{ active_keys }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card text-white bg-warning mb-3 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-bar-chart"></i> Total Requests</h5>
+                <p class="display-4">{{ total_requests }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+<h4 class="mt-4"><i class="bi bi-clock-history"></i> Recent Activity</h4>
+<div class="table-responsive">
+    <table class="table table-striped table-hover">
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Tool</th>
+                <th>Parameters</th>
+                <th>Status</th>
+                <th>Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in recent_logs %}
+            <tr>
+                <td>{{ log.key_name or 'Deleted Key' }}</td>
+                <td>{{ log.tool }}</td>
+                <td>{{ log.parameters }}</td>
+                <td>
+                    <span class="badge bg-{{ 'success' if log.response_status < 400 else 'danger' }}">
+                        {{ log.response_status }}
+                    </span>
+                </td>
+                <td>{{ log.timestamp }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
