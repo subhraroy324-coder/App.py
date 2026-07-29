@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHAYAN_EXPLORER HUB - OSINT Matrix Control</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-deep: #05050a;
+            --card-bg: rgba(18, 18, 30, 0.7);
+            --border-glow: rgba(168, 85, 247, 0.4);
+            --accent-purple: #a855f7;
+            --accent-pink: #ec4899;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Space Grotesk', sans-serif; }
+        body { background-color: var(--bg-deep); color: var(--text-main); min-height: 100vh; overflow-x: hidden; background-image: radial-gradient(circle at 50% 10%, #1e1145 0%, #05050a 70%); }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 20px 40px; border-bottom: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(10px); }
+        .logo { font-size: 1.5rem; font-weight: 700; background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-transform: uppercase; letter-spacing: 2px; }
+        
+        .container { max-width: 1400px; margin: 30px auto; padding: 0 20px; }
+        
+        .card-3d { background: var(--card-bg); border: 1px solid var(--border-glow); border-radius: 16px; padding: 30px; box-shadow: 0 20px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.1); backdrop-filter: blur(12px); transform-style: preserve-3d; transition: transform 0.3s ease; margin-bottom: 30px; }
+        .card-3d:hover { transform: translateY(-3px); border-color: var(--accent-pink); }
+        
+        h2 { font-size: 1.2rem; margin-bottom: 20px; color: var(--accent-purple); display: flex; align-items: center; gap: 10px; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .grid-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .form-group { display: flex; flex-direction: column; gap: 8px; }
+        label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+        input, select { background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.15); padding: 12px 16px; border-radius: 8px; color: #fff; font-size: 0.95rem; outline: none; transition: all 0.3s; }
+        input:focus, select:focus { border-color: var(--accent-purple); box-shadow: 0 0 10px rgba(168,85,247,0.3); }
+        
+        .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 15px; }
+        .tool-chip { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); padding: 10px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; text-align: center; transition: all 0.2s; user-select: none; }
+        .tool-chip.selected { background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink)); border-color: transparent; color: #fff; font-weight: 600; box-shadow: 0 0 15px rgba(236,72,153,0.4); }
+        
+        .btn { background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink)); color: white; border: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.3s; box-shadow: 0 5px 20px rgba(168,85,247,0.4); }
+        .btn:hover { opacity: 0.9; transform: scale(1.02); }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
+        th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        th { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; }
+        tr:hover { background: rgba(255,255,255,0.02); }
+        
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+        .badge.active { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.4); }
+        .badge.suspended { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.4); }
+        
+        .action-btns { display: flex; gap: 8px; }
+        .action-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.75rem; transition: 0.2s; }
+        .action-btn:hover { background: var(--accent-purple); border-color: transparent; }
+        .action-btn.del:hover { background: #ef4444; }
+        
+        .endpoint-box { background: rgba(0,0,0,0.8); border: 1px solid rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-top: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .endpoint-url { font-family: monospace; color: #34d399; font-size: 0.9rem; word-break: break-all; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="logo"><i class="fa-solid fa-shield-halved"></i> SHAYAN_EXPLORER HUB</div>
+        <div>
+            <span style="color: var(--text-muted); font-size: 0.9rem; margin-right: 15px;"><i class="fa-solid fa-circle" style="color: #34d399; font-size: 8px;"></i> System Operational</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Provision New Key Section -->
+        <div class="card-3d">
+            <h2><i class="fa-solid fa-key"></i> Propose System Communications Key</h2>
+            <form id="keyForm">
+                <div class="grid-form">
+                    <div class="form-group">
+                        <label>Target Owner Name</label>
+                        <input type="text" id="custName" placeholder="e.g. Client Profile" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Custom Assignment String</label>
+                        <input type="text" id="custKey" placeholder="Random token if empty">
+                    </div>
+                    <div class="form-group">
+                        <label>Daily Call Limit Volume</label>
+                        <input type="number" id="dailyLimit" value="2500" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Life Strategy</label>
+                        <select id="keyType" onchange="toggleExpiry(this.value)">
+                            <option value="Lifetime">Lifetime Access Tier</option>
+                            <option value="Custom">Custom Expiry Date/Time</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="expiryGroup" style="display:none;">
+                        <label>Target Expiration Lifecycle</label>
+                        <input type="datetime-local" id="expiryDate">
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <label>Route Authorization Privileges Scope</label>
+                        <div>
+                            <span class="action-btn" onclick="setScope('ALL')">All APIs</span>
+                            <span class="action-btn" onclick="setScope('SPECIFIC')">Specific APIs</span>
+                        </div>
+                    </div>
+                    <div class="tools-grid" id="toolsGrid">
+                        {% for tool in tools %}
+                        <div class="tool-chip selected" data-tool="{{ tool }}" onclick="toggleTool(this)">{{ tool | upper }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <button type="submit" class="btn" style="margin-top: 25px;"><i class="fa-solid fa-plus-circle"></i> Provision Key Matrix</button>
+            </form>
+        </div>
+
+        <!-- Endpoint Tester & Copier -->
+        <div class="card-3d">
+            <h2><i class="fa-solid fa-code"></i> Live Endpoint Template Generator</h2>
+            <div class="grid-form">
+                <div class="form-group">
+                    <label>Select Tool Endpoint</label>
+                    <select id="testTool" onchange="updateEndpointPreview()">
+                        {% for tool in tools %}
+                        <option value="{{ tool }}">{{ tool | upper }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Authorization Token Key</label>
+                    <input type="text" id="testKey" placeholder="Enter key (e.g. vx-osint)">
+                </div>
+            </div>
+            <div class="endpoint-box">
+                <span class="endpoint-url" id="endpointPreview">Select parameters...</span>
+                <button class="action-btn" onclick="copyEndpoint()"><i class="fa-solid fa-copy"></i> Copy Endpoint</button>
+            </div>
+        </div>
+
+        <!-- Key Registry Matrix -->
+        <div class="card-3d">
+            <h2><i class="fa-solid fa-database"></i> Key Registry Matrix</h2>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Owner Identity</th>
+                            <th>Authorization Token Key</th>
+                            <th>Dynamic Expiry Status</th>
+                            <th>Usage Velocity</th>
+                            <th>Status</th>
+                            <th>Route Scope Privileges</th>
+                            <th>System Configuration Interventions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="keysTableBody">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Intercepted Request Streams Pipeline Logs -->
+        <div class="card-3d">
+            <h2><i class="fa-solid fa-terminal"></i> Intercepted Request Streams Pipeline Logs</h2>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time Intercepted</th>
+                            <th>Executing Key Token ID</th>
+                            <th>Endpoint Route Call</th>
+                            <th>Query Data Parameters Passed</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logsTableBody">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let scopeMode = 'ALL';
+
+        function toggleExpiry(val) {
+            document.getElementById('expiryGroup').style.display = val === 'Custom' ? 'flex' : 'none';
+        }
+
+        function setScope(mode) {
+            scopeMode = mode;
+            const chips = document.querySelectorAll('.tool-chip');
+            chips.forEach(c => {
+                if(mode === 'ALL') c.classList.add('selected');
+                else c.classList.remove('selected');
+            });
+        }
+
+        function toggleTool(el) {
+            el.classList.toggle('selected');
+        }
+
+        async function loadData() {
+            try {
+                const res = await fetch('/api/admin/keys');
+                const keys = await res.json();
+                const tbody = document.getElementById('keysTableBody');
+                tbody.innerHTML = '';
+                keys.forEach(k => {
+                    tbody.innerHTML += `
+                        <tr>
+                            <td><b>${k.customer_name}</b><br><small style="color:var(--text-muted);">${k.email || ''}</small></td>
+                            <td><code>${k.key}</code></td>
+                            <td><span style="color:var(--accent-purple); font-weight:650;">${k.type === 'Lifetime' ? 'LIFETIME ACCESS' : k.expiry}</span></td>
+                            <td>${k.usage_count} / ${k.daily_limit}</td>
+                            <td><span class="badge ${k.status.toLowerCase()}">${k.status}</span></td>
+                            <td>${k.scope.includes('ALL') ? 'ALL' : k.scope.length + ' Tools'}</td>
+                            <td>
+                                <div class="action-btns">
+                                    <button class="action-btn" onclick="toggleKey('${k.key}')">Toggle</button>
+                                    <button class="action-btn del" onclick="deleteKey('${k.key}')">Del</button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                const logsRes = await fetch('/api/admin/logs');
+                const logs = await logsRes.json();
+                const logsBody = document.getElementById('logsTableBody');
+                logsBody.innerHTML = '';
+                if(logs.length === 0) {
+                    logsBody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">No active request stream metrics tracking currently.</td></tr>`;
+                }
+                logs.forEach(l => {
+                    logsBody.innerHTML += `
+                        <tr>
+                            <td><small>${l.time}</small></td>
+                            <td><code>${l.key}</code></td>
+                            <td><span style="color:var(--accent-pink);">/${l.endpoint}</span></td>
+                            <td><small style="color:var(--text-muted);">${l.params}</small></td>
+                        </tr>
+                    `;
+                });
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        document.getElementById('keyForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const selectedTools = [];
+            document.querySelectorAll('.tool-chip.selected').forEach(c => {
+                selectedTools.push(c.getAttribute('data-tool'));
+            });
+
+            const payload = {
+                customer_name: document.getElementById('custName').value,
+                email: document.getElementById('custKey').value, // placeholder field mapping
+                custom_key: document.getElementById('custKey').value,
+                key_type: document.getElementById('keyType').value,
+                expiry: document.getElementById('expiryDate').value || null,
+                daily_limit: parseInt(document.getElementById('dailyLimit').value),
+                scope_type: scopeMode,
+                tools: selectedTools
+            };
+
+            const res = await fetch('/api/admin/keys', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+
+            if(res.ok) {
+                document.getElementById('keyForm').reset();
+                setScope('ALL');
+                loadData();
+                alert('API Key provisioned successfully!');
+            } else {
+                const err = await res.json();
+                alert('Error: ' + err.detail);
+            }
+        });
+
+        async function deleteKey(keyId) {
+            if(confirm('Are you sure you want to delete this key?')) {
+                await fetch(`/api/admin/keys/${keyId}`, {method: 'DELETE'});
+                loadData();
+            }
+        }
+
+        async function toggleKey(keyId) {
+            await fetch(`/api/admin/keys/${keyId}/toggle`, {method: 'POST'});
+            loadData();
+        }
+
+        function updateEndpointPreview() {
+            const tool = document.getElementById('testTool').value;
+            const key = document.getElementById('testKey').value || 'YOUR_API_KEY';
+            const base = window.location.origin;
+            document.getElementById('endpointPreview').innerText = `${base}/api/v1/${tool}?key=${key}&num=9876543210`;
+        }
+
+        document.getElementById('testKey').addEventListener('input', updateEndpointPreview);
+
+        function copyEndpoint() {
+            const text = document.getElementById('endpointPreview').innerText;
+            navigator.clipboard.writeText(text);
+            alert('Endpoint URL copied to clipboard!');
+        }
+
+        setInterval(loadData, 5000);
+        loadData();
+        updateEndpointPreview();
+    </script>
+</body>
+</html>
