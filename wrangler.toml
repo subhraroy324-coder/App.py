@@ -1,7 +1,3 @@
 name = "shayan-osint-gateway"
 main = "index.js"
 compatibility_date = "2026-01-01"
-
-[[kv_namespaces]]
-binding = "SHAYAN_KV"
-id = "YOUR_KV_NAMESPACE_ID"
