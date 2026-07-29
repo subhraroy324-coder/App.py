@@ -2,6 +2,12 @@ const ADMIN_USER = "vernex";
 const ADMIN_PASS = "vernex@16vx";
 const MASTER_API_KEY = "explorer16";
 
+// Persistent global store ensuring keys stay loaded
+globalThis.SHAYAN_KEYS = globalThis.SHAYAN_KEYS || {
+  "vx-osint": { owner: "Master Deployment", expiry: "LIFETIME", limit: 5000, used: 0, tools: ["all"], status: "Active" }
+};
+globalThis.SHAYAN_LOGS = globalThis.SHAYAN_LOGS || [];
+
 const TOOLS_MAP = {
   "adv": ["https://ft-osint-api.duckdns.org/api/adv", "num"],
   "paytm": ["https://ft-osint-api.duckdns.org/api/paytm", "num"],
@@ -30,23 +36,16 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Helper for KV storage fallback if KV isn't bound yet
-    const kv = env.SHAYAN_KV;
-
     // --- API GATEWAY ENDPOINT ---
     if (path.startsWith("/api/")) {
       const toolName = path.split("/")[2];
       const userKey = url.searchParams.get("key");
 
-      let keysData = kv ? JSON.parse(await kv.get("KEYS") || "{}") : {
-        "vx-osint": { owner: "Master Deployment", expiry: "LIFETIME", limit: 5000, used: 0, tools: ["all"], status: "Active" }
-      };
-
-      if (!userKey || !keysData[userKey]) {
+      if (!userKey || !globalThis.SHAYAN_KEYS[userKey]) {
         return Response.json({ error: "Unauthorized", message: "Invalid or missing API key. Developer: SHAYAN_EXPLORER" }, { status: 403 });
       }
 
-      const keyData = keysData[userKey];
+      const keyData = globalThis.SHAYAN_KEYS[userKey];
 
       if (keyData.status !== "Active") {
         return Response.json({ error: "Forbidden", message: "API Key is suspended or inactive." }, { status: 403 });
@@ -72,19 +71,14 @@ export default {
       const paramVal = url.searchParams.get(paramName) || "";
 
       keyData.used += 1;
-      keysData[userKey] = keyData;
-      if (kv) await kv.put("KEYS", JSON.stringify(keysData));
-
-      // Log request
-      let logs = kv ? JSON.parse(await kv.get("LOGS") || "[]") : [];
-      logs.unshift({
+      
+      globalThis.SHAYAN_LOGS.unshift({
         time: new Date().toISOString().replace('T', ' ').substring(0, 19),
         key: userKey,
         tool: toolName,
         query: paramVal
       });
-      if (logs.length > 50) logs.pop();
-      if (kv) await kv.put("LOGS", JSON.stringify(logs));
+      if (globalThis.SHAYAN_LOGS.length > 50) globalThis.SHAYAN_LOGS.pop();
 
       const targetUrl = `${baseUrl}?key=${MASTER_API_KEY}&${paramName}=${encodeURIComponent(paramVal)}`;
 
@@ -121,11 +115,7 @@ export default {
     if (!isLoggedIn && path !== "/login") return Response.redirect(`${url.origin}/login`, 302);
     if (path === "/login") return new HtmlResponse(loginPageHtml());
 
-    // --- ADMIN ACTIONS (PROVISION / DELETE / TOGGLE / RESET) ---
-    let keysData = kv ? JSON.parse(await kv.get("KEYS") || "{}") : {
-      "vx-osint": { owner: "Master Deployment", expiry: "LIFETIME", limit: 5000, used: 0, tools: ["all"], status: "Active" }
-    };
-
+    // --- ADMIN ACTIONS ---
     if (request.method === "POST") {
       const formData = await request.formData();
       const action = formData.get("action");
@@ -133,37 +123,32 @@ export default {
       if (action === "provision") {
         const owner = formData.get("owner") || "Client Profile";
         let customKey = formData.get("custom_key").trim();
-        if (!customKey) customKey = 'vx-' + Math.random().toString(36.substring(2, 9));
+        if (!customKey) customKey = 'vx-' + Math.random().toString(36).substring(2, 9);
         const limit = parseInt(formData.get("limit") || "2500");
         const isLifetime = formData.get("lifetime");
         let expiry = formData.get("expiry") || "LIFETIME";
         if (isLifetime === "on") expiry = "LIFETIME";
         const tools = formData.getAll("tools");
 
-        keysData[customKey] = { owner, expiry, limit, used: 0, tools, status: "Active" };
-        if (kv) await kv.put("KEYS", JSON.stringify(keysData));
+        globalThis.SHAYAN_KEYS[customKey] = { owner, expiry, limit, used: 0, tools, status: "Active" };
       } else if (action === "delete") {
         const targetKey = formData.get("key");
-        delete keysData[targetKey];
-        if (kv) await kv.put("KEYS", JSON.stringify(keysData));
+        delete globalThis.SHAYAN_KEYS[targetKey];
       } else if (action === "toggle") {
         const targetKey = formData.get("key");
-        if (keysData[targetKey]) {
-          keysData[targetKey].status = keysData[targetKey].status === "Active" ? "Suspended" : "Active";
-          if (kv) await kv.put("KEYS", JSON.stringify(keysData));
+        if (globalThis.SHAYAN_KEYS[targetKey]) {
+          globalThis.SHAYAN_KEYS[targetKey].status = globalThis.SHAYAN_KEYS[targetKey].status === "Active" ? "Suspended" : "Active";
         }
       } else if (action === "reset") {
         const targetKey = formData.get("key");
-        if (keysData[targetKey]) {
-          keysData[targetKey].used = 0;
-          if (kv) await kv.put("KEYS", JSON.stringify(keysData));
+        if (globalThis.SHAYAN_KEYS[targetKey]) {
+          globalThis.SHAYAN_KEYS[targetKey].used = 0;
         }
       }
       return Response.redirect(`${url.origin}/`, 302);
     }
 
-    let logs = kv ? JSON.parse(await kv.get("LOGS") || "[]") : [];
-    return new HtmlResponse(dashboardHtml(keysData, logs));
+    return new HtmlResponse(dashboardHtml(globalThis.SHAYAN_KEYS, globalThis.SHAYAN_LOGS));
   }
 };
 
@@ -176,7 +161,7 @@ function loginPageHtml() {
   <style>
     body{background:#0a0b10;color:#e2e8f0;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}
     .box{background:#111420;border:1px solid #1e2538;padding:35px;border-radius:12px;width:320px;box-shadow:0 15px 35px rgba(0,0,0,0.7);text-align:center;}
-    h2{color:#00ffcc;margin-top:0;}
+    h2{color:#d946ef;margin-top:0;}
     input{width:100%;padding:11px;margin:10px 0;background:#06080e;border:1px solid #252f4a;color:#fff;border-radius:6px;box-sizing:border-box;}
     button{background:linear-gradient(135deg,#d946ef,#8b5cf6);color:#fff;border:none;padding:12px;width:100%;border-radius:6px;font-weight:bold;cursor:pointer;margin-top:10px;}
   </style></head>
