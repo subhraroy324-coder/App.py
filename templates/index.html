@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SHAYAN_EXPLORER | Advanced OSINT Control Panel</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <aside class="sidebar glass-3d">
+            <h2>SHAYAN_EXPLORER</h2>
+            <p class="badge">API Developer Portal</p>
+            <ul class="nav-links">
+                <li><a href="#overview" class="active">Overview</a></li>
+                <li><a href="#keys">API Key Manager</a></li>
+                <li><a href="#endpoints">Endpoints & Docs</a></li>
+                <li><a href="#logs">Live Logs & History</a></li>
+                <li><a href="/logout" class="logout-btn">Logout</a></li>
+            </ul>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="header glass-3d">
+                <h1>Control Center</h1>
+                <div class="status-indicator"><span class="pulse"></span> System Online & Monitoring</div>
+            </header>
+
+            <!-- Key Creation & Management Section -->
+            <section id="keys" class="section-card glass-3d">
+                <h3>🔑 Generate & Manage API Keys</h3>
+                <form action="/admin/create_key" method="POST" class="key-form">
+                    <input type="text" name="key_name" placeholder="Client / App Name" required>
+                    <input type="text" name="custom_key_val" placeholder="Custom Key String (e.g., shayan_key_01)" required>
+                    <input type="datetime-local" name="expiry" required>
+                    <input type="number" name="limit" placeholder="Request Limit" value="500" required>
+                    
+                    <div class="tool-selector">
+                        <label><input type="checkbox" name="tools" value="all" checked> All Tools</label>
+                        <label><input type="checkbox" name="tools" value="number"> Number Lookup</label>
+                        <label><input type="checkbox" name="tools" value="vehicle"> Vehicle Lookup</label>
+                        <label><input type="checkbox" name="tools" value="insta"> Instagram</label>
+                        <label><input type="checkbox" name="tools" value="upi"> UPI Lookup</label>
+                    </div>
+                    <button type="submit" class="btn-3d">Create Key</button>
+                </form>
+
+                <h4>Active Keys Inventory</h4>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Key</th>
+                                <th>Usage / Limit</th>
+                                <th>Expiry</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for k, v in keys.items() %}
+                            <tr>
+                                <td>{{ v.name }}</td>
+                                <td><code>{{ k }}</code> <button onclick="navigator.clipboard.writeText('{{ k }}')" class="copy-btn">Copy</button></td>
+                                <td>{{ v.used }} / {{ v.limit }}</td>
+                                <td>{{ v.expiry }}</td>
+                                <td><span class="status-pill {{ v.status.lower() }}">{{ v.status }}</span></td>
+                                <td>
+                                    <a href="/admin/toggle_status/{{ k }}" class="action-link">Toggle</a>
+                                    <a href="/admin/delete_key/{{ k }}" class="action-link danger">Delete</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Endpoints One-Click Copy Section -->
+            <section id="endpoints" class="section-card glass-3d">
+                <h3>🚀 API Endpoints Hub (SHAYAN_EXPLORER)</h3>
+                <p>Click any endpoint to copy the URL template. Append your generated key to <code>?key=YOUR_KEY</code>.</p>
+                <div class="endpoints-grid">
+                    {% set endpoints = [
+                        ('Number Lookup', '/api/number?key=KEY&num=9876543210'),
+                        ('Vehicle Lookup', '/api/vehicle?key=KEY&vehicle=MH02FZ0555'),
+                        ('UPI Lookup', '/api/upi?key=KEY&upi=example@ybl'),
+                        ('Instagram Info', '/api/insta?key=KEY&username=cristiano'),
+                        ('Telegram Info', '/api/tg?key=KEY&info=username'),
+                        ('IP Tracker', '/api/ip?key=KEY&ip=8.8.8.8'),
+                        ('Call Tracer', '/api/calltracer?key=KEY&num=9876543210'),
+                        ('Paytm Info', '/api/paytm?key=KEY&num=9876543210'),
+                        ('Snapchat Lookup', '/api/snap?key=KEY&username=user'),
+                        ('GitHub Lookup', '/api/git?key=KEY&username=user'),
+                        ('Challan Info', '/api/challan?key=KEY&vehicle=UP42BB2572'),
+                        ('NumLeak Info', '/api/numleak?key=KEY&num=9876543210')
+                    ] %}
+                    {% for name, url in endpoints %}
+                    <div class="endpoint-box">
+                        <strong>{{ name }}</strong>
+                        <code>{{ request.host_url[:-1] }}{{ url }}</code>
+                        <button onclick="navigator.clipboard.writeText('{{ request.host_url[:-1] }}{{ url }}')" class="btn-sm">Copy Endpoint</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <!-- Request Logs -->
+            <section id="logs" class="section-card glass-3d">
+                <h3>📊 Real-Time Request Logs & History</h3>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Key Used</th>
+                                <th>Tool Endpoint</th>
+                                <th>Query Parameters</th>
+                                <th>Client IP</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in logs %}
+                            <tr>
+                                <td>{{ log.time }}</td>
+                                <td><code>{{ log.key }}</code></td>
+                                <td>{{ log.tool }}</td>
+                                <td><small>{{ log.query }}</small></td>
+                                <td>{{ log.ip }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
