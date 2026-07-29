@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2><i class="bi bi-key"></i> All API Keys</h2>
+<div class="table-responsive mt-3">
+    <table class="table table-striped table-hover">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Key</th>
+                <th>Expiry</th>
+                <th>Limit</th>
+                <th>Used</th>
+                <th>Allowed APIs</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key in keys %}
+            <tr>
+                <td>{{ key.id }}</td>
+                <td>{{ key.key_name }}</td>
+                <td><code>{{ key.key_value }}</code></td>
+                <td>{{ key.expiry_date or 'Lifetime' }}</td>
+                <td>{{ key.request_limit or '∞' }}</td>
+                <td>{{ key.request_count }}</td>
+                <td>{{ key.allowed_apis or 'All' }}</td>
+                <td>
+                    <span class="badge bg-{{ 'success' if key.status == 'active' else 'danger' if key.status == 'suspended' else 'secondary' }}">
+                        {{ key.status }}
+                    </span>
+                </td>
+                <td>
+                    <a href="{{ url_for('edit_key', key_id=key.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil"></i></a>
+                    <form method="POST" action="{{ url_for('suspend_key', key_id=key.id) }}" style="display:inline;">
+                        <button type="submit" class="btn btn-sm btn-{{ 'secondary' if key.status == 'active' else 'success' }}">
+                            <i class="bi bi-{{ 'pause' if key.status == 'active' else 'play' }}"></i>
+                        </button>
+                    </form>
+                    <form method="POST" action="{{ url_for('delete_key', key_id=key.id) }}" style="display:inline;" onsubmit="return confirm('Delete this key?');">
+                        <button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
