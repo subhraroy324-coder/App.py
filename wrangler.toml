@@ -1,3 +1,8 @@
 name = "shayan-osint-gateway"
 main = "index.js"
 compatibility_date = "2026-01-01"
+
+# [KV Namespaces - Uncomment if you connect a Cloudflare KV Namespace for permanent disk persistence]
+# [[kv_namespaces]]
+# binding = "API_KV"
+# id = "your_kv_namespace_id_here"
