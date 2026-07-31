@@ -2,22 +2,18 @@ import os
 import sys
 import re
 import subprocess
-import zipfile
-import urllib.parse
-import urllib.request
 import json
 from datetime import datetime
-from functools import wraps
-from flask import Flask, render_template_string, request, redirect, url_for, flash, session, jsonify
+from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
+import razorpay
 
 app = Flask(__name__)
-# Fix for Render's HTTPS proxy so Google OAuth redirect URIs match https://
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-app.secret_key = os.getenv('SECRET_KEY', 'vx_hosting_enterprise_secure_auth_key_2026')
+app.secret_key = os.getenv('SECRET_KEY', 'vx_hosting_elite_secure_key_2026')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///vx_hosting_enterprise.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'bot_storage_cluster'
@@ -27,36 +23,38 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 db = SQLAlchemy(app)
 
 # ==========================================
-# GOOGLE OAUTH CREDENTIALS (REPLACE OR USE RENDER ENVIRONMENT VARIABLES)
+# YOUR LIVE RAZORPAY CREDENTIALS
 # ==========================================
-app.config['GOOGLE_CLIENT_ID'] = os.getenv('GOOGLE_CLIENT_ID', 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com')
-app.config['GOOGLE_CLIENT_SECRET'] = os.getenv('GOOGLE_CLIENT_SECRET', 'YOUR_GOOGLE_CLIENT_SECRET')
+RAZORPAY_KEY_ID = 'rzp_live_TGzOHwqjwcYfov'
+RAZORPAY_KEY_SECRET = 'qbqBS1dxdFRYTizozIH083E4'
+
+razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 ACTIVE_PROCESSES = {}
 BOT_LOGS = {}
 
 class BotInstance(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    user_email = db.Column(db.String(120), nullable=False)
     name = db.Column(db.String(100), nullable=False)
     filename = db.Column(db.String(250), nullable=False)
     filepath = db.Column(db.String(500), nullable=False)
     token = db.Column(db.String(100), nullable=False)
     status = db.Column(db.String(20), default="Running")
     pid = db.Column(db.Integer, nullable=True)
+    plan = db.Column(db.String(50), default="Starter (₹49)")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Transaction(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.String(100), nullable=False)
+    payment_id = db.Column(db.String(100), nullable=True)
+    plan_name = db.Column(db.String(100), nullable=False)
+    amount = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(20), default="Pending")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 with app.app_context():
     db.create_all()
-
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user' not in session:
-            flash('Authentication required. Please log in with Google to access VX Hosting.', 'error')
-            return redirect(url_for('login_page'))
-        return f(*args, **kwargs)
-    return decorated_function
 
 def start_bot_process(bot):
     if bot.id in ACTIVE_PROCESSES:
@@ -65,7 +63,7 @@ def start_bot_process(bot):
         except:
             pass
     try:
-        BOT_LOGS[bot.id] = [f"[{datetime.utcnow().strftime('%H:%M:%S')}] INITIALIZING SUBPROCESS: {bot.name}"]
+        BOT_LOGS[bot.id] = [f"[{datetime.utcnow().strftime('%H:%M:%S')}] INITIALIZING KERNEL SUBPROCESS: {bot.name}"]
         process = subprocess.Popen(
             [sys.executable, bot.filepath],
             stdout=subprocess.PIPE,
@@ -80,110 +78,290 @@ def start_bot_process(bot):
     except Exception as e:
         bot.status = "Error"
         db.session.commit()
-        BOT_LOGS[bot.id] = BOT_LOGS.get(bot.id, []) + [f"ERROR: {str(e)}"]
+        BOT_LOGS[bot.id] = BOT_LOGS.get(bot.id, []) + [f"CRITICAL ERROR: {str(e)}"]
 
-HTML_TEMPLATE = """
+DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VX Hosting | Enterprise Bot Cloud</title>
+    <title>VX HOSTING ELITE | Enterprise Bot Infrastructure</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         [x-cloak] { display: none !important; }
-        .glass-panel { background: rgba(12, 6, 6, 0.92); backdrop-filter: blur(20px); border: 1px solid rgba(220, 38, 38, 0.2); }
-        .glow-red { box-shadow: 0 0 35px -5px rgba(220, 38, 38, 0.25); }
-        .matrix-bg { background-image: radial-gradient(rgba(220, 38, 38, 0.08) 1px, transparent 1px); background-size: 24px 24px; }
+        .glass-panel { background: rgba(10, 5, 5, 0.94); backdrop-filter: blur(25px); border: 1px solid rgba(220, 38, 38, 0.25); }
+        .glow-red { box-shadow: 0 0 40px -8px rgba(220, 38, 38, 0.3); }
+        .matrix-bg { background-image: radial-gradient(rgba(220, 38, 38, 0.08) 1px, transparent 1px); background-size: 28px 28px; }
     </style>
 </head>
-<body class="bg-[#050202] matrix-bg text-slate-100 font-sans"
-      x-data="{ sidebarOpen: true, activeTab: 'dashboard', selectedBotLog: null, logContent: 'Loading logs...', async fetchLogs(id) { this.selectedBotLog = id; let res = await fetch('/bot/' + id + '/logs'); let data = await res.json(); this.logContent = data.logs.join('\\n'); } }">
+<body class="bg-[#030101] matrix-bg text-slate-100 font-sans"
+      x-data="{ 
+          activeTab: 'dashboard', 
+          selectedBotLog: null, 
+          logContent: 'Initializing secure terminal stream...', 
+          async fetchLogs(id) { 
+              this.selectedBotLog = id; 
+              let res = await fetch('/bot/' + id + '/logs'); 
+              let data = await res.json(); 
+              this.logContent = data.logs.join('\\n'); 
+          },
+          payWithRazorpay(planName, amountInINR) {
+              fetch('/create-order', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ plan: planName, amount: amountInINR })
+              })
+              .then(res => res.json())
+              .then(order => {
+                  var options = {
+                      \"key\": order.key_id,
+                      \"amount\": order.amount,
+                      \"currency\": \"INR\",
+                      \"name\": \"VX Hosting Elite\",
+                      \"description\": \"Subscription for \" + planName,
+                      \"order_id\": order.order_id,
+                      \"handler\": function (response){
+                          fetch('/payment-success', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                  payment_id: response.razorpay_payment_id,
+                                  order_id: response.razorpay_order_id,
+                                  signature: response.razorpay_signature,
+                                  plan: planName
+                              })
+                          }).then(res => {
+                              window.location.reload();
+                          });
+                      },
+                      \"theme\": { \"color\": \"#dc2626\" }
+                  };
+                  var rzp1 = new Razorpay(options);
+                  rzp1.open();
+              });
+          }
+      }">
     <div class="flex h-screen overflow-hidden">
         <!-- Sidebar -->
-        <aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'" class="fixed inset-y-0 left-0 z-50 w-72 bg-[#0c0606] border-r border-red-950/50 transition-transform flex flex-col justify-between lg:translate-x-0 lg:static">
+        <aside class="w-72 bg-[#070303] border-r border-red-950/60 flex flex-col justify-between hidden lg:flex">
             <div>
-                <div class="flex items-center justify-between px-6 h-20 border-b border-red-950/50">
-                    <div class="flex items-center space-x-3.5">
-                        <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-red-700 via-rose-600 to-black flex items-center justify-center text-white shadow-xl p-2">
-                            <svg viewBox="0 0 24 24" fill="none" class="w-full h-full text-white"><path d="M2 19H22V21H2V19ZM3.5 17L5 7L9.5 12L12 5L14.5 12L19 7L20.5 17H3.5Z" fill="currentColor"/></svg>
-                        </div>
-                        <div>
-                            <span class="text-base font-black uppercase text-white">VX Hosting</span>
-                            <span class="block text-[10px] text-red-400 font-extrabold">POWERED BY VX</span>
-                        </div>
+                <div class="flex items-center space-x-3.5 px-6 h-24 border-b border-red-950/60">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-red-700 via-rose-600 to-black flex items-center justify-center text-white shadow-2xl p-2.5 glow-red">
+                        <i class="fa-solid fa-server text-xl"></i>
+                    </div>
+                    <div>
+                        <span class="text-base font-black tracking-wider uppercase text-white">VX HOSTING</span>
+                        <span class="block text-[10px] text-red-500 font-extrabold tracking-widest">ELITE INFRASTRUCTURE</span>
                     </div>
                 </div>
                 <nav class="p-4 space-y-2">
-                    <button @click="activeTab = 'dashboard'" :class="activeTab === 'dashboard' ? 'bg-red-600 text-white' : 'text-slate-400 hover:bg-red-950/30'" class="w-full flex items-center space-x-3.5 px-4 py-3.5 rounded-2xl font-bold text-sm"><i class="fa-solid fa-chart-pie w-5"></i><span>Dashboard</span></button>
-                    <button @click="activeTab = 'deploy'" :class="activeTab === 'deploy' ? 'bg-red-600 text-white' : 'text-slate-400 hover:bg-red-950/30'" class="w-full flex items-center space-x-3.5 px-4 py-3.5 rounded-2xl font-bold text-sm"><i class="fa-solid fa-cloud-arrow-up w-5"></i><span>Upload & Host</span></button>
+                    <button @click="activeTab = 'dashboard'" :class="activeTab === 'dashboard' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'text-slate-400 hover:bg-red-950/30'" class="w-full flex items-center space-x-3.5 px-4 py-3.5 rounded-2xl font-bold text-sm transition-all"><i class="fa-solid fa-chart-pie w-5"></i><span>Dashboard</span></button>
+                    <button @click="activeTab = 'deploy'" :class="activeTab === 'deploy' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'text-slate-400 hover:bg-red-950/30'" class="w-full flex items-center space-x-3.5 px-4 py-3.5 rounded-2xl font-bold text-sm transition-all"><i class="fa-solid fa-cloud-arrow-up w-5"></i><span>Deploy Bot</span></button>
+                    <button @click="activeTab = 'billing'" :class="activeTab === 'billing' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'text-slate-400 hover:bg-red-950/30'" class="w-full flex items-center space-x-3.5 px-4 py-3.5 rounded-2xl font-bold text-sm transition-all"><i class="fa-solid fa-credit-card w-5"></i><span>Pricing & Billing</span></button>
                 </nav>
             </div>
-            <div class="p-4 border-t border-red-950/50"><div class="bg-black/60 p-3 rounded-xl text-xs text-slate-300 font-bold">[VX HOSTING] Online</div></div>
+            <div class="p-6 border-t border-red-950/60">
+                <div class="bg-black/80 border border-red-900/30 p-4 rounded-2xl">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                        <span class="text-xs font-black text-slate-200">CLUSTER ONLINE</span>
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-1">Status: 99.99% Uptime SLA</p>
+                </div>
+            </div>
         </aside>
-        <!-- Main Content -->
+
+        <!-- Main Workspace -->
         <div class="flex-1 flex flex-col overflow-y-auto">
-            <header class="h-20 border-b border-red-950/50 bg-[#0c0606]/80 flex items-center justify-between px-6 lg:px-10">
-                <h1 class="text-xl font-black uppercase text-white" x-text="activeTab"></h1>
-                <div class="flex items-center space-x-3 bg-red-950/30 border border-red-900/30 px-4 py-2 rounded-2xl">
-                    <img src="{{ session['user'].get('picture', '') }}" class="w-8 h-8 rounded-full border border-red-500">
-                    <span class="text-xs font-bold text-white">{{ session['user'].get('name', 'User') }}</span>
-                    <a href="{{ url_for('logout') }}" class="ml-2 text-slate-400 hover:text-red-400"><i class="fa-solid fa-right-from-bracket"></i></a>
+            <header class="h-24 border-b border-red-950/60 bg-[#070303]/90 flex items-center justify-between px-8 backdrop-blur-md">
+                <div class="flex items-center space-x-4">
+                    <h1 class="text-xl font-black uppercase text-white tracking-wide" x-text="activeTab"></h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button @click="activeTab = 'billing'" class="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider glow-red transition-all">
+                        <i class="fa-solid fa-crown mr-2"></i> Upgrade Tier
+                    </button>
                 </div>
             </header>
-            <main class="p-6 lg:p-10 max-w-7xl mx-auto w-full space-y-8">
+
+            <main class="p-8 lg:p-12 max-w-7xl mx-auto w-full space-y-8">
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
                         {% for category, message in messages %}
-                            <div class="p-4 rounded-2xl border bg-red-500/10 border-red-500/20 text-red-300 text-sm font-semibold">{{ message }}</div>
+                            <div class="p-4 rounded-2xl border bg-red-500/10 border-red-500/30 text-red-300 text-sm font-semibold flex items-center space-x-3">
+                                <i class="fa-solid fa-triangle-exclamation text-red-500"></i>
+                                <span>{{ message }}</span>
+                            </div>
                         {% endfor %}
                     {% endif %}
                 {% endwith %}
-                <!-- Dashboard Tab -->
-                <div x-show="activeTab === 'dashboard'" class="space-y-6">
-                    <div class="glass-panel p-6 rounded-3xl glow-red">
-                        <p class="text-xs font-black text-red-400 uppercase">Your Hosted Bots</p>
-                        <h3 class="text-3xl font-black mt-2 text-white">{{ bots|length }}</h3>
+
+                <!-- DASHBOARD TAB -->
+                <div x-show="activeTab === 'dashboard'" class="space-y-8">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="glass-panel p-6 rounded-3xl glow-red">
+                            <p class="text-xs font-black text-red-400 uppercase tracking-widest">Active Instances</p>
+                            <h3 class="text-4xl font-black mt-2 text-white">{{ bots|length }}</h3>
+                            <span class="text-[10px] text-slate-400 mt-1 block">Running 24/7 on Dedicated Core</span>
+                        </div>
+                        <div class="glass-panel p-6 rounded-3xl">
+                            <p class="text-xs font-black text-slate-400 uppercase tracking-widest">Active Subscription</p>
+                            <h3 class="text-2xl font-black mt-2 text-emerald-400">Enterprise Elite</h3>
+                            <span class="text-[10px] text-slate-400 mt-1 block">Razorpay Live Secured</span>
+                        </div>
+                        <div class="glass-panel p-6 rounded-3xl">
+                            <p class="text-xs font-black text-slate-400 uppercase tracking-widest">Cluster Storage</p>
+                            <h3 class="text-2xl font-black mt-2 text-white">NVMe SSD</h3>
+                            <span class="text-[10px] text-slate-400 mt-1 block">High-Speed File Mounts</span>
+                        </div>
                     </div>
+
                     <div class="glass-panel rounded-3xl overflow-hidden p-6">
-                        <table class="w-full text-left">
-                            <thead>
-                                <tr class="text-slate-400 text-xs uppercase border-b border-red-950">
-                                    <th class="py-3 px-4">Name</th>
-                                    <th class="py-3 px-4">Status</th>
-                                    <th class="py-3 px-4 text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-red-950/30 text-sm">
-                                {% for bot in bots %}
-                                <tr>
-                                    <td class="py-4 px-4 font-bold text-white">{{ bot.name }}</td>
-                                    <td class="py-4 px-4"><span class="px-2.5 py-1 rounded-full text-xs font-black bg-emerald-500/10 text-emerald-400">{{ bot.status }}</span></td>
-                                    <td class="py-4 px-4 text-right space-x-2">
-                                        <button @click="fetchLogs({{ bot.id }})" class="px-3 py-1.5 bg-black border border-red-950 rounded-xl text-xs text-slate-300">Logs</button>
-                                        <a href="{{ url_for('control_bot', bot_id=bot.id, action='delete') }}" class="px-3 py-1.5 bg-black border border-red-950 rounded-xl text-xs text-rose-400">Delete</a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                        <div class="flex items-center justify-between pb-6 border-b border-red-950/60">
+                            <h3 class="text-lg font-black uppercase text-white">Your Deployed Bot Instances</h3>
+                            <button @click="activeTab = 'deploy'" class="bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 px-4 py-2 rounded-xl text-xs font-bold transition-all">+ Deploy New Bot</button>
+                        </div>
+                        <div class="overflow-x-auto mt-4">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="text-slate-400 text-xs uppercase border-b border-red-950/60">
+                                        <th class="py-4 px-4">Bot Name</th>
+                                        <th class="py-4 px-4">Plan Tier</th>
+                                        <th class="py-4 px-4">Status</th>
+                                        <th class="py-4 px-4 text-right">Terminal & Management</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-red-950/40 text-sm">
+                                    {% for bot in bots %}
+                                    <tr>
+                                        <td class="py-4 px-4 font-bold text-white flex items-center space-x-3">
+                                            <div class="w-8 h-8 rounded-xl bg-red-950/50 border border-red-900/50 flex items-center justify-center text-red-400">
+                                                <i class="fa-solid fa-robot text-xs"></i>
+                                            </div>
+                                            <span>{{ bot.name }}</span>
+                                        </td>
+                                        <td class="py-4 px-4"><span class="px-3 py-1 rounded-full text-xs font-black bg-red-950/40 border border-red-900/40 text-red-300">{{ bot.plan }}</span></td>
+                                        <td class="py-4 px-4"><span class="px-3 py-1 rounded-full text-xs font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{{ bot.status }}</span></td>
+                                        <td class="py-4 px-4 text-right space-x-3">
+                                            <button @click="fetchLogs({{ bot.id }})" class="px-3.5 py-2 bg-black border border-red-950 rounded-xl text-xs text-slate-300 hover:border-red-500 transition-all"><i class="fa-solid fa-terminal mr-1.5"></i> Logs</button>
+                                            <a href="{{ url_for('control_bot', bot_id=bot.id, action='delete') }}" class="px-3.5 py-2 bg-black border border-red-950 rounded-xl text-xs text-rose-400 hover:border-rose-500 transition-all"><i class="fa-solid fa-trash mr-1.5"></i> Delete</a>
+                                        </td>
+                                    </tr>
+                                    {% else %}
+                                    <tr>
+                                        <td colspan="4" class="py-8 text-center text-slate-500 font-semibold">No bot instances deployed yet. Click "Deploy Bot" to start hosting.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
+
+                    <!-- Terminal Logs Box -->
                     <div x-show="selectedBotLog !== null" x-cloak class="glass-panel rounded-3xl p-6 space-y-4">
-                        <h4 class="font-black text-white text-base">Bot Terminal Output</h4>
-                        <pre x-text="logContent" class="bg-black p-4 rounded-2xl text-red-400 font-mono text-xs h-48 overflow-auto"></pre>
+                        <div class="flex items-center justify-between">
+                            <h4 class="font-black text-white text-base flex items-center space-x-2">
+                                <i class="fa-solid fa-terminal text-red-500"></i>
+                                <span>Live Kernel Subprocess Output</span>
+                            </h4>
+                            <button @click="selectedBotLog = null" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                        <pre x-text="logContent" class="bg-black/90 border border-red-950 p-5 rounded-2xl text-red-400 font-mono text-xs h-64 overflow-auto shadow-inner"></pre>
                     </div>
                 </div>
-                <!-- Deploy Tab -->
+
+                <!-- DEPLOY TAB -->
                 <div x-show="activeTab === 'deploy'" class="max-w-xl mx-auto">
-                    <div class="glass-panel rounded-3xl p-8">
-                        <h2 class="text-2xl font-black text-white mb-4">Deploy Bot 24/7</h2>
-                        <form action="{{ url_for('upload_bot') }}" method="POST" enctype="multipart/form-data" class="space-y-4">
-                            <input type="text" name="bot_name" required placeholder="Bot Name" class="w-full bg-black border border-red-950 rounded-xl px-4 py-3 text-white text-sm">
-                            <input type="file" name="bot_file" accept=".py,.zip" required class="w-full bg-black border border-red-950 rounded-xl px-4 py-3 text-slate-400 text-sm">
-                            <button type="submit" class="w-full bg-red-600 hover:bg-red-500 text-white font-black py-3 rounded-xl">Deploy Now</button>
+                    <div class="glass-panel rounded-3xl p-8 glow-red">
+                        <div class="text-center space-y-2 mb-6">
+                            <div class="w-14 h-14 rounded-2xl bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-400 mx-auto">
+                                <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
+                            </div>
+                            <h2 class="text-2xl font-black text-white uppercase">Deploy Telegram Bot</h2>
+                            <p class="text-xs text-slate-400">Upload your Python bot script (.py or .zip). Runs 24/7 on the cloud cluster.</p>
+                        </div>
+                        <form action="{{ url_for('upload_bot') }}" method="POST" enctype="multipart/form-data" class="space-y-5">
+                            <div>
+                                <label class="block text-xs font-black uppercase text-slate-400 mb-2">Bot Identification Name</label>
+                                <input type="text" name="bot_name" required placeholder="e.g., CryptoVipBot" class="w-full bg-black/80 border border-red-950 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-red-500 focus:outline-none transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-black uppercase text-slate-400 mb-2">Select Hosting Plan Tier</label>
+                                <select name="bot_plan" class="w-full bg-black/80 border border-red-950 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-red-500 focus:outline-none transition-all">
+                                    <option value="Starter (₹49)">Starter Plan - ₹49 / Month</option>
+                                    <option value="Pro Enterprise (₹199)">Pro Enterprise - ₹199 / Month</option>
+                                    <option value="Ultimate Cluster (₹499)">Ultimate Cluster - ₹499 / Month</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-black uppercase text-slate-400 mb-2">Bot Script (.py or .zip)</label>
+                                <input type="file" name="bot_file" accept=".py,.zip" required class="w-full bg-black/80 border border-red-950 rounded-2xl px-4 py-3 text-slate-400 text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-red-600 file:text-white hover:file:bg-red-500 transition-all">
+                            </div>
+                            <button type="submit" class="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black py-4 rounded-2xl uppercase tracking-wider text-sm glow-red transition-all">Deploy Instance Now</button>
                         </form>
+                    </div>
+                </div>
+
+                <!-- BILLING & PRICING TAB -->
+                <div x-show="activeTab === 'billing'" class="space-y-8">
+                    <div class="text-center max-w-2xl mx-auto space-y-3">
+                        <span class="text-xs font-black uppercase text-red-500 tracking-widest">Razorpay Instant Checkout</span>
+                        <h2 class="text-3xl font-black text-white uppercase">Choose Your Power Tier</h2>
+                        <p class="text-sm text-slate-400">Upgrade your hosting cluster with premium dedicated resources, high-frequency CPU cycles, and priority uptime support.</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4">
+                        <!-- Starter Plan -->
+                        <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between space-y-6">
+                            <div class="space-y-4">
+                                <span class="px-3 py-1 rounded-full text-[10px] font-black bg-red-950/60 text-red-400 border border-red-900/50 uppercase">Starter</span>
+                                <h3 class="text-3xl font-black text-white">₹49 <span class="text-xs font-normal text-slate-400">/ month</span></h3>
+                                <p class="text-xs text-slate-400">Perfect for running standard Telegram bots with lightweight background loops.</p>
+                                <ul class="space-y-3 text-xs text-slate-300">
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> 1 Active Bot Instance</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> 24/7 Cloud Uptime</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Standard Terminal Logs</li>
+                                </ul>
+                            </div>
+                            <button @click="payWithRazorpay('Starter Plan', 4900)" class="w-full bg-black border border-red-900/60 hover:bg-red-600 text-white font-black py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-all">Select Starter</button>
+                        </div>
+
+                        <!-- Pro Enterprise -->
+                        <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between space-y-6 glow-red border-red-500/50 relative overflow-hidden">
+                            <div class="absolute top-0 right-0 bg-red-600 text-white text-[9px] font-black px-4 py-1 rounded-bl-xl uppercase tracking-widest">Most Popular</div>
+                            <div class="space-y-4">
+                                <span class="px-3 py-1 rounded-full text-[10px] font-black bg-red-950/60 text-red-400 border border-red-900/50 uppercase">Pro Enterprise</span>
+                                <h3 class="text-3xl font-black text-white">₹199 <span class="text-xs font-normal text-slate-400">/ month</span></h3>
+                                <p class="text-xs text-slate-400">Designed for high-traffic bots, automated trading engines, and group managers.</p>
+                                <ul class="space-y-3 text-xs text-slate-300">
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Up to 5 Active Instances</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Priority CPU Allocation</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Live Real-Time Logs</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Auto-Restart on Crash</li>
+                                </ul>
+                            </div>
+                            <button @click="payWithRazorpay('Pro Enterprise', 19900)" class="w-full bg-red-600 hover:bg-red-500 text-white font-black py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-lg shadow-red-600/40">Select Pro</button>
+                        </div>
+
+                        <!-- Ultimate Cluster -->
+                        <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between space-y-6">
+                            <div class="space-y-4">
+                                <span class="px-3 py-1 rounded-full text-[10px] font-black bg-red-950/60 text-red-400 border border-red-900/50 uppercase">Ultimate Cluster</span>
+                                <h3 class="text-3xl font-black text-white">₹499 <span class="text-xs font-normal text-slate-400">/ month</span></h3>
+                                <p class="text-xs text-slate-400">Full dedicated resource pooling for developers managing multiple enterprise bot networks.</p>
+                                <ul class="space-y-3 text-xs text-slate-300">
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Unlimited Bot Instances</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Dedicated RAM & Core</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> VIP Telegram Support</li>
+                                    <li><i class="fa-solid fa-check text-red-500 mr-2"></i> Instant Failover Node</li>
+                                </ul>
+                            </div>
+                            <button @click="payWithRazorpay('Ultimate Cluster', 49900)" class="w-full bg-black border border-red-900/60 hover:bg-red-600 text-white font-black py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-all">Select Ultimate</button>
+                        </div>
                     </div>
                 </div>
             </main>
@@ -193,104 +371,59 @@ HTML_TEMPLATE = """
 </html>
 """
 
-LOGIN_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en" class="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login | VX Hosting</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>.glass-panel { background: rgba(12, 6, 6, 0.95); backdrop-filter: blur(25px); border: 1px solid rgba(220, 38, 38, 0.25); }</style>
-</head>
-<body class="bg-[#050202] text-slate-100 h-screen flex items-center justify-center p-4">
-    <div class="glass-panel rounded-3xl p-8 max-w-md w-full text-center space-y-6 shadow-2xl">
-        <div class="w-16 h-16 rounded-2xl bg-red-600 flex items-center justify-center text-white mx-auto p-3">
-            <svg viewBox="0 0 24 24" fill="none" class="w-full h-full text-white"><path d="M2 19H22V21H2V19ZM3.5 17L5 7L9.5 12L12 5L14.5 12L19 7L20.5 17H3.5Z" fill="currentColor"/></svg>
-        </div>
-        <h1 class="text-2xl font-black uppercase text-white">VX Hosting</h1>
-        <p class="text-slate-400 text-sm">Authenticate via Google to access dashboard and cloud hosting.</p>
-        <a href="{{ url_for('login') }}" class="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl block uppercase tracking-wider text-sm"><i class="fa-brands fa-google mr-2"></i> Sign in with Google</a>
-    </div>
-</body>
-</html>
-"""
+@app.route('/')
+def index():
+    bots = BotInstance.query.all()
+    return render_template_string(DASHBOARD_TEMPLATE, bots=bots)
 
-@app.route('/login-page')
-def login_page():
-    if 'user' in session:
-        return redirect(url_for('index'))
-    return render_template_string(LOGIN_TEMPLATE)
+@app.route('/create-order', methods=['POST'])
+def create_order():
+    data = request.get_json()
+    plan_name = data.get('plan', 'Starter Plan')
+    amount = data.get('amount', 4900)
 
-@app.route('/login')
-def login():
-    redirect_uri = url_for('authorize', _external=True)
-    params = {
-        'client_id': app.config['GOOGLE_CLIENT_ID'],
-        'redirect_uri': redirect_uri,
-        'response_type': 'code',
-        'scope': 'openid email profile',
-        'access_type': 'offline',
-        'prompt': 'consent'
-    }
-    return redirect('https://accounts.google.com/o/oauth2/v2/auth?' + urllib.parse.urlencode(params))
-
-@app.route('/authorize')
-def authorize():
-    code = request.args.get('code')
-    if not code:
-        flash('Google authentication failed: No authorization code received.', 'error')
-        return redirect(url_for('login_page'))
-    
-    redirect_uri = url_for('authorize', _external=True)
-    payload = {
-        'code': code,
-        'client_id': app.config['GOOGLE_CLIENT_ID'],
-        'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
-        'redirect_uri': redirect_uri,
-        'grant_type': 'authorization_code'
+    order_data = {
+        'amount': amount,
+        'currency': 'INR',
+        'payment_capture': 1
     }
     try:
-        data = urllib.parse.urlencode(payload).encode('utf-8')
-        req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data, method='POST')
-        with urllib.request.urlopen(req) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            access_token = res_data.get('access_token')
-            
-        userinfo_url = f'https://www.googleapis.com/oauth2/v3/userinfo?access_token={access_token}'
-        with urllib.request.urlopen(userinfo_url) as response:
-            user_info = json.loads(response.read().decode('utf-8'))
-            
-        session['user'] = user_info
-        flash('Successfully authenticated!', 'success')
+        order = razorpay_client.order.create(data=order_data)
+        new_tx = Transaction(order_id=order['id'], plan_name=plan_name, amount=amount, status="Created")
+        db.session.add(new_tx)
+        db.session.commit()
+
+        return jsonify({
+            'order_id': order['id'],
+            'amount': amount,
+            'key_id': RAZORPAY_KEY_ID
+        })
     except Exception as e:
-        flash(f'Authentication error: {str(e)}.', 'error')
-        return redirect(url_for('login_page'))
-        
-    return redirect(url_for('index'))
+        return jsonify({'error': str(e)}), 400
 
-@app.route('/logout')
-def logout():
-    session.pop('user', None)
-    return redirect(url_for('login_page'))
+@app.route('/payment-success', methods=['POST'])
+def payment_success():
+    data = request.get_json()
+    payment_id = data.get('payment_id')
+    order_id = data.get('order_id')
+    plan_name = data.get('plan')
 
-@app.route('/')
-@login_required
-def index():
-    user_email = session['user'].get('email')
-    bots = BotInstance.query.filter_by(user_email=user_email).all()
-    return render_template_string(HTML_TEMPLATE, bots=bots)
+    tx = Transaction.query.filter_by(order_id=order_id).first()
+    if tx:
+        tx.payment_id = payment_id
+        tx.status = "Success"
+        db.session.commit()
+        flash(f'Successfully upgraded to {plan_name} via Razorpay Live!', 'success')
+    return jsonify({'status': 'success'})
 
 @app.route('/upload', methods=['POST'])
-@login_required
 def upload_bot():
     bot_name = request.form.get('bot_name')
+    bot_plan = request.form.get('bot_plan', 'Starter (₹49)')
     file = request.files.get('bot_file')
-    user_email = session['user'].get('email')
 
     if not file or file.filename == '':
-        flash('Please select a valid file.', 'error')
+        flash('Please select a valid Python or ZIP file.', 'error')
         return redirect(url_for('index'))
 
     filename = secure_filename(file.filename)
@@ -303,33 +436,29 @@ def upload_bot():
     token_match = re.search(r'\d{9,10}:[A-Za-z0-9_-]{35}', content)
     bot_token = token_match.group(0) if token_match else "mock_token_12345"
 
-    new_bot = BotInstance(user_email=user_email, name=bot_name, filename=filename, filepath=filepath, token=bot_token)
+    new_bot = BotInstance(name=bot_name, filename=filename, filepath=filepath, token=bot_token, plan=bot_plan)
     db.session.add(new_bot)
     db.session.commit()
     start_bot_process(new_bot)
-    flash(f'Bot "{bot_name}" deployed successfully!', 'success')
+    flash(f'Bot "{bot_name}" successfully deployed and running 24/7!', 'success')
     return redirect(url_for('index'))
 
 @app.route('/bot/<int:bot_id>/logs')
-@login_required
 def get_bot_logs(bot_id):
-    bot = BotInstance.query.get_or_404(bot_id)
-    if bot.user_email != session['user'].get('email'):
-        return jsonify({"logs": ["Unauthorized."]}), 403
-    return jsonify({"logs": BOT_LOGS.get(bot_id, ["No logs yet."])})
+    return jsonify({"logs": BOT_LOGS.get(bot_id, ["No logs available yet."])})
 
 @app.route('/bot/<int:bot_id>/<action>')
-@login_required
 def control_bot(bot_id, action):
     bot = BotInstance.query.get_or_404(bot_id)
-    if bot.user_email != session['user'].get('email'):
-        return redirect(url_for('index'))
     if action == 'delete':
         if bot.id in ACTIVE_PROCESSES:
-            try: ACTIVE_PROCESSES[bot.id].terminate()
-            except: pass
+            try:
+                ACTIVE_PROCESSES[bot.id].terminate()
+            except:
+                pass
         db.session.delete(bot)
         db.session.commit()
+        flash('Bot instance deleted successfully.', 'success')
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
