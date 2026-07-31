@@ -1,0 +1,13 @@
+# Python bytecode & virtual environments
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Environment secrets
+.env
+
+# SQLite Database & Upload Storage
+*.db
+instance/
+bot_storage_cluster/
