@@ -23,7 +23,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 db = SQLAlchemy(app)
 
 # ==========================================
-# YOUR LIVE RAZORPAY CREDENTIALS
+# RAZORPAY LIVE CREDENTIALS
 # ==========================================
 RAZORPAY_KEY_ID = 'rzp_live_TGzOHwqjwcYfov'
 RAZORPAY_KEY_SECRET = 'qbqBS1dxdFRYTizozIH083E4'
