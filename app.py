@@ -118,13 +118,13 @@ DASHBOARD_TEMPLATE = """
               .then(res => res.json())
               .then(order => {
                   var options = {
-                      \"key\": order.key_id,
-                      \"amount\": order.amount,
-                      \"currency\": \"INR\",
-                      \"name\": \"VX Hosting Elite\",
-                      \"description\": \"Subscription for \" + planName,
-                      \"order_id\": order.order_id,
-                      \"handler\": function (response){
+                      'key': order.key_id,
+                      'amount': order.amount,
+                      'currency': 'INR',
+                      'name': 'VX Hosting Elite',
+                      'description': 'Subscription for ' + planName,
+                      'order_id': order.order_id,
+                      'handler': function (response){
                           fetch('/payment-success', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
@@ -138,7 +138,7 @@ DASHBOARD_TEMPLATE = """
                               window.location.reload();
                           });
                       },
-                      \"theme\": { \"color\": \"#dc2626\" }
+                      'theme': { 'color': '#dc2626' }
                   };
                   var rzp1 = new Razorpay(options);
                   rzp1.open();
