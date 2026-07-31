@@ -1031,4 +1031,3 @@ def callback_handler(call):
 if __name__ == "__main__":
     print("🚀 Telegram Bot Running Successfully!")
     bot.infinity_polling(skip_pending=True)
-
