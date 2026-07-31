@@ -13,23 +13,27 @@ import razorpay
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-app.secret_key = os.getenv('SECRET_KEY', 'vx_hosting_elite_secure_key_2026')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///vx_hosting_enterprise.db'
+# Retrieve secrets strictly from environment variables
+app.secret_key = os.getenv('SECRET_KEY', 'default_fallback_secret_change_in_production')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///vx_hosting_enterprise.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = 'bot_storage_cluster'
+app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'bot_storage_cluster')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 db = SQLAlchemy(app)
 
 # ==========================================
-# RAZORPAY LIVE CREDENTIALS
+# RAZORPAY CREDENTIALS
 # ==========================================
-RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', 'rzp_live_TGzOHwqjwcYfov')
-RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', 'qbqBS1dxdFRYTizozIH083E4')
+RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
+RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
 
 try:
-    razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+        razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    else:
+        razorpay_client = None
 except Exception:
     razorpay_client = None
 
@@ -153,7 +157,6 @@ DASHBOARD_TEMPLATE = """
         <!-- Sidebar -->
         <aside class="w-72 bg-[#070303] border-r border-red-950/60 flex flex-col justify-between hidden lg:flex">
             <div>
-                <!-- BRANDING / LOGO IN TOP SIDEBAR -->
                 <div class="flex items-center space-x-3.5 px-6 h-24 border-b border-red-950/60">
                     <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-red-600 via-rose-600 to-black flex items-center justify-center text-white shadow-xl p-2 glow-red logo-glow">
                         <i class="fa-solid fa-bolt text-2xl text-red-100"></i>
@@ -190,10 +193,8 @@ DASHBOARD_TEMPLATE = """
 
         <!-- Main Workspace -->
         <div class="flex-1 flex flex-col overflow-y-auto">
-            <!-- Header Bar -->
             <header class="h-24 border-b border-red-950/60 bg-[#070303]/90 flex items-center justify-between px-6 lg:px-10 backdrop-blur-md sticky top-0 z-50">
                 <div class="flex items-center space-x-4">
-                    <!-- TOP CORNER LOGO (FOR MOBILE & DESKTOP HEADER) -->
                     <div class="flex items-center space-x-3">
                         <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-red-600 to-rose-500 flex items-center justify-center text-white font-black text-xl shadow-lg glow-red logo-glow">
                             <i class="fa-solid fa-shield-halved"></i>
@@ -225,7 +226,6 @@ DASHBOARD_TEMPLATE = """
                     {% endif %}
                 {% endwith %}
 
-                <!-- DASHBOARD TAB -->
                 <div x-show="activeTab === 'dashboard'" class="space-y-8">
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div class="glass-panel p-6 rounded-3xl glow-red">
@@ -289,7 +289,6 @@ DASHBOARD_TEMPLATE = """
                         </div>
                     </div>
 
-                    <!-- Terminal Output View -->
                     <div x-show="selectedBotLog !== null" x-cloak class="glass-panel rounded-3xl p-6 space-y-4">
                         <div class="flex items-center justify-between">
                             <h4 class="font-black text-white text-base flex items-center space-x-2">
@@ -302,7 +301,6 @@ DASHBOARD_TEMPLATE = """
                     </div>
                 </div>
 
-                <!-- DEPLOY TAB -->
                 <div x-show="activeTab === 'deploy'" class="max-w-xl mx-auto">
                     <div class="glass-panel rounded-3xl p-8 glow-red">
                         <div class="text-center space-y-2 mb-6">
@@ -334,7 +332,6 @@ DASHBOARD_TEMPLATE = """
                     </div>
                 </div>
 
-                <!-- BILLING & PRICING TAB -->
                 <div x-show="activeTab === 'billing'" class="space-y-8">
                     <div class="text-center max-w-2xl mx-auto space-y-3">
                         <span class="text-xs font-black uppercase text-red-500 tracking-widest">Instant Razorpay Checkout</span>
@@ -343,7 +340,6 @@ DASHBOARD_TEMPLATE = """
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4">
-                        <!-- Starter -->
                         <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between space-y-6">
                             <div class="space-y-4">
                                 <span class="px-3 py-1 rounded-full text-[10px] font-black bg-red-950/60 text-red-400 border border-red-900/50 uppercase">Starter</span>
@@ -357,7 +353,6 @@ DASHBOARD_TEMPLATE = """
                             <button @click="payWithRazorpay('Starter Plan', 4900)" class="w-full bg-black border border-red-900/60 hover:bg-red-600 text-white font-black py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-all">Pay ₹49 Now</button>
                         </div>
 
-                        <!-- Pro -->
                         <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between space-y-6 glow-red border-red-500/50 relative overflow-hidden">
                             <div class="absolute top-0 right-0 bg-red-600 text-white text-[9px] font-black px-4 py-1 rounded-bl-xl uppercase tracking-widest">Popular</div>
                             <div class="space-y-4">
@@ -372,7 +367,6 @@ DASHBOARD_TEMPLATE = """
                             <button @click="payWithRazorpay('Pro Enterprise', 19900)" class="w-full bg-red-600 hover:bg-red-500 text-white font-black py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-lg shadow-red-600/40">Pay ₹199 Now</button>
                         </div>
 
-                        <!-- Ultimate -->
                         <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between space-y-6">
                             <div class="space-y-4">
                                 <span class="px-3 py-1 rounded-full text-[10px] font-black bg-red-950/60 text-red-400 border border-red-900/50 uppercase">Ultimate</span>
