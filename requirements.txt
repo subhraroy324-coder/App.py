@@ -1,4 +1,4 @@
-pyTelegramBotAPI
-psutil
-razorpay
-requests
+pyTelegramBotAPI==4.15.2
+requests==2.31.0
+psutil==5.9.8
+razorpay==1.4.1
