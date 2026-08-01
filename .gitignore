@@ -1,8 +1,0 @@
-__pycache__/
-*.py[cod]
-venv/
-env/
-hosted_sites/
-*.db
-instance/
-.DS_Store
