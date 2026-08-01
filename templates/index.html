@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHAYAN_EXPLORER | 3D API Management Suite</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --accent: #38bdf8;
+            --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text-main); background-image: radial-gradient(circle at 10% 20%, rgba(14, 165, 233, 0.1) 0%, transparent 40%); min-height: 100vh; padding: 20px; }
+        
+        header { display: flex; justify-content: space-between; align-items: center; padding: 20px 30px; background: var(--card-bg); backdrop-filter: blur(16px); border: 1px solid var(--border-color); border-radius: 16px; margin-bottom: 30px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        header h1 { font-size: 20px; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; display: flex; align-items: center; gap: 10px; }
+        .logout-btn { background: #ef4444; color: white; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; transition: 0.3s; }
+        .logout-btn:hover { background: #dc2626; }
+
+        .grid-container { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
+        @media(max-width: 1024px) { .grid-container { grid-template-columns: 1fr; } }
+
+        .card { background: var(--card-bg); backdrop-filter: blur(16px); border: 1px solid var(--border-color); border-radius: 16px; padding: 25px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); transform: perspective(1000px) rotateX(0deg) rotateY(0deg); transition: transform 0.3s; }
+        .card:hover { transform: perspective(1000px) translateY(-3px); border-color: rgba(56, 189, 248, 0.3); }
+        
+        h2 { font-size: 16px; margin-bottom: 20px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+        
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+        input, select { width: 100%; padding: 10px 14px; background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; color: white; font-size: 14px; }
+        input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+        .tools-checkboxes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 140px; overflow-y: auto; padding: 10px; background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; }
+        .tools-checkboxes label { display: flex; align-items: center; gap: 8px; color: var(--text-main); cursor: pointer; font-size: 12px; }
+        .tools-checkboxes input { width: auto; }
+
+        button.btn-primary { width: 100%; padding: 12px; background: var(--accent-gradient); border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; transition: 0.3s; margin-top: 10px; }
+        button.btn-primary:hover { opacity: 0.9; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border-color); }
+        th { color: var(--accent); background: rgba(15, 23, 42, 0.5); }
+        
+        .badge { background: rgba(56, 189, 248, 0.1); color: var(--accent); padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; }
+        .badge-danger { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+        .full-width { grid-column: span 2; }
+        @media(max-width: 1024px) { .full-width { grid-column: span 1; } }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1><i class="fa-solid fa-shield-halved"></i> SHAYAN_EXPLORER API Management Suite</h1>
+        <a href="/logout" class="logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
+    </header>
+
+    <div class="grid-container">
+        <!-- Generate Key Card -->
+        <div class="card">
+            <h2><i class="fa-solid fa-key"></i> Generate Custom API Key</h2>
+            <form action="/create_key" method="POST">
+                <div class="form-group">
+                    <label>Key Name / Identifier</label>
+                    <input type="text" name="key_name" required placeholder="e.g. Client_One">
+                </div>
+                <div class="form-group">
+                    <label>Custom Secret Token</label>
+                    <input type="text" name="custom_key" required placeholder="e.g. secret_token_123">
+                </div>
+                <div class="form-group">
+                    <label>Expiration Date</label>
+                    <input type="date" name="expiry_date" required>
+                </div>
+                <div class="form-group">
+                    <label>Daily Request Limit</label>
+                    <input type="number" name="daily_limit" value="500" required>
+                </div>
+                <div class="form-group">
+                    <label>Permitted Endpoints</label>
+                    <div class="tools-checkboxes">
+                        <label><input type="checkbox" name="tools" value="all" checked> 🚀 ALL TOOLS</label>
+                        {% for tool in tools %}
+                        <label><input type="checkbox" name="tools" value="{{ tool }}"> {{ tool }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary">Create API Key</button>
+            </form>
+        </div>
+
+        <!-- Active Keys Manager -->
+        <div class="card">
+            <h2><i class="fa-solid fa-database"></i> Active API Keys</h2>
+            <div style="overflow-x: auto; max-height: 400px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Key</th>
+                            <th>Expiry</th>
+                            <th>Usage / Limit</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for k in keys %}
+                        <tr>
+                            <td><strong>{{ k.key_name }}</strong></td>
+                            <td><code>{{ k.api_key }}</code></td>
+                            <td>{{ k.expiry_date }}</td>
+                            <td><span class="badge">{{ k.requests_used }} / {{ k.daily_limit }}</span></td>
+                            <td>
+                                <form action="/delete_key/{{ k.id }}" method="POST" style="display:inline;">
+                                    <button type="submit" style="background:none; border:none; color:#ef4444; cursor:pointer;"><i class="fa-solid fa-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No active keys.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Request Logs -->
+    <div class="card full-width">
+        <h2><i class="fa-solid fa-history"></i> Live Search Audit Logs & Key Activity</h2>
+        <div style="overflow-x: auto; max-height: 350px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Key Name</th>
+                        <th>Tool Used</th>
+                        <th>Query Parameters Searched</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log.timestamp }}</td>
+                        <td><strong>{{ log.key_name }}</strong></td>
+                        <td><span class="badge">{{ log.tool_name }}</span></td>
+                        <td><code>{{ log.query_params }}</code></td>
+                        <td>
+                            {% if log.status_code == 200 %}
+                            <span class="badge">200 OK</span>
+                            {% else %}
+                            <span class="badge badge-danger">{{ log.status_code }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No request logs recorded yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</body>
+</html>
