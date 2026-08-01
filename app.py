@@ -31,21 +31,21 @@ MASTER_TEMPLATE = """
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-        body { background-color: #000000 !important; color: #f3f4f6; font-family: 'Plus Jakarta Sans', sans-serif; }
-        .glass-panel { background: rgba(0, 0, 0, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
-        .glass-card { background: rgba(0, 0, 0, 0.98); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9); }
+        body { background-color: #000000; color: #f3f4f6; font-family: 'Plus Jakarta Sans', sans-serif; }
+        .glass-panel { background: rgba(5, 5, 5, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .glass-card { background: rgba(5, 5, 5, 0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8); }
         .glow-btn { box-shadow: 0 0 25px -5px rgba(255, 255, 255, 0.2); }
-        #sidebar-drawer { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); background-color: #000000 !important; }
+        #sidebar-drawer { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #000000; }
         ::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #333333; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col selection:bg-white selection:text-black antialiased bg-black">
+<body class="min-h-screen flex flex-col selection:bg-white selection:text-black antialiased">
 
     <!-- Top Navigation Bar -->
-    <header class="glass-panel sticky top-0 z-40 px-4 sm:px-8 py-3.5 flex justify-between items-center border-b border-white/10 bg-black">
+    <header class="glass-panel sticky top-0 z-40 px-4 sm:px-8 py-3.5 flex justify-between items-center border-b border-white/10">
         <div class="flex items-center space-x-3 sm:space-x-5">
             <button onclick="toggleSidebar()" class="p-2 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition flex items-center justify-center space-x-1.5 active:scale-95" title="Menu">
                 <span class="text-sm font-bold tracking-widest">⋮</span>
@@ -107,7 +107,7 @@ MASTER_TEMPLATE = """
     </aside>
 
     <!-- Main Content Container -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-10 flex-grow w-full bg-black">
+    <main class="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-10 flex-grow w-full">
         {% block content %}{% endblock %}
     </main>
 
@@ -168,18 +168,18 @@ INDEX_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
     </div>
 
     <!-- Responsive Projects List -->
-    <div class="glass-card rounded-3xl overflow-hidden bg-black">
-        <div class="hidden md:grid px-6 py-4 border-b border-white/10 text-[11px] font-extrabold uppercase tracking-wider text-gray-400 grid-cols-6 items-center bg-black">
+    <div class="glass-card rounded-3xl overflow-hidden">
+        <div class="hidden md:grid px-6 py-4 border-b border-white/10 text-[11px] font-extrabold uppercase tracking-wider text-gray-400 grid-cols-6 items-center">
             <span class="col-span-2">Project / Instance Name</span>
             <span>Source Type</span>
             <span>Status</span>
             <span>Live Endpoint URL</span>
             <span class="text-right">Manage Actions</span>
         </div>
-        <div class="divide-y divide-white/10 bg-black">
+        <div class="divide-y divide-white/10">
             {% if deployments %}
                 {% for d_id, item in deployments.items() %}
-                <div class="p-5 sm:px-6 sm:py-4 flex flex-col md:grid md:grid-cols-6 items-start md:items-center gap-3 md:gap-0 text-sm bg-black">
+                <div class="p-5 sm:px-6 sm:py-4 flex flex-col md:grid md:grid-cols-6 items-start md:items-center gap-3 md:gap-0 text-sm">
                     <div class="col-span-2 flex flex-col truncate w-full">
                         <span class="font-bold text-white text-base sm:text-sm truncate">{{ item.name }}</span>
                         <span class="text-[11px] text-gray-500 font-mono mt-0.5">ID: {{ d_id }}</span>
@@ -213,7 +213,7 @@ INDEX_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
                 </div>
                 {% endfor %}
             {% else %}
-                <div class="px-6 py-20 text-center text-gray-500 text-sm bg-black">
+                <div class="px-6 py-20 text-center text-gray-500 text-sm">
                     No deployments found. Click <a href="/deploy-page" class="text-white underline font-bold">New Deployment</a> to deploy your app.
                 </div>
             {% endif %}
@@ -222,7 +222,7 @@ INDEX_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
 """)
 
 DEPLOY_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
-    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 bg-black">
+    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8">
         <h1 class="text-xl sm:text-2xl font-extrabold text-white mb-1">VX Hostinger Deployment Studio</h1>
         <p class="text-gray-400 text-xs sm:text-sm mb-6">Deploy files, GitHub repos, Telegram bots, or Discord bots instantly.</p>
 
@@ -278,7 +278,7 @@ DEPLOY_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
 """)
 
 DOMAIN_REGISTRAR_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
-    <div class="max-w-2xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-6 bg-black">
+    <div class="max-w-2xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-6">
         <div>
             <h1 class="text-xl sm:text-2xl font-extrabold text-white mb-1">VX Domain Registrar & Cart</h1>
             <p class="text-gray-400 text-xs sm:text-sm">Search custom TLD extensions, add items to cart, configure duration, and pay securely.</p>
@@ -437,7 +437,7 @@ DOMAIN_REGISTRAR_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock 
 """)
 
 DATABASES_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
-    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-4 bg-black">
+    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-4">
         <h1 class="text-xl sm:text-2xl font-extrabold text-white">Database & Redis Cluster</h1>
         <p class="text-gray-400 text-xs sm:text-sm">Provision managed PostgreSQL and Redis instances for your VX Hostinger apps.</p>
         <div class="bg-black border border-white/10 p-5 rounded-2xl space-y-3 text-xs">
@@ -449,7 +449,7 @@ DATABASES_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', ""
 """)
 
 ENV_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
-    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-4 bg-black">
+    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-4">
         <h1 class="text-xl sm:text-2xl font-extrabold text-white">Environment Variables & Secrets</h1>
         <p class="text-gray-400 text-xs sm:text-sm">Inject secure runtime environment keys into your deployments safely.</p>
         <div class="space-y-3">
@@ -461,7 +461,7 @@ ENV_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
 """)
 
 SSL_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
-    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-4 bg-black">
+    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 space-y-4">
         <h1 class="text-xl sm:text-2xl font-extrabold text-white">SSL & TLS Certificates</h1>
         <p class="text-gray-400 text-xs sm:text-sm">Manage automated Let's Encrypt SSL encryption for all your custom domains.</p>
         <div class="bg-black border border-white/10 p-5 rounded-2xl space-y-3 text-xs">
@@ -472,7 +472,7 @@ SSL_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
 """)
 
 SETTINGS_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
-    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8 bg-black">
+    <div class="max-w-xl mx-auto glass-card rounded-3xl p-6 sm:p-8">
         <h1 class="text-xl sm:text-2xl font-extrabold text-white mb-1">Instance Configuration</h1>
         <p class="text-gray-400 text-xs sm:text-sm mb-6">Update deployment runtime parameters or delete the instance.</p>
 
@@ -501,7 +501,7 @@ SETTINGS_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
 """)
 
 LOGS_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
-    <div class="space-y-5 bg-black">
+    <div class="space-y-5">
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
                 <h1 class="text-xl sm:text-2xl font-extrabold text-white">Analytics & Build Console</h1>
@@ -512,7 +512,7 @@ LOGS_PAGE = MASTER_TEMPLATE.replace('{% block content %}{% endblock %}', """
             </a>
         </div>
 
-        <div class="glass-card rounded-3xl p-5 font-mono text-xs text-emerald-400 h-80 sm:h-[420px] overflow-y-auto leading-relaxed bg-black border border-white/10" id="term">
+        <div class="glass-card rounded-3xl p-5 font-mono text-xs text-emerald-400 h-80 sm:h-[420px] overflow-y-auto leading-relaxed" id="term">
             {{ item.logs | safe }}
         </div>
 
@@ -678,7 +678,7 @@ def update_settings(d_id):
     return redirect(url_for('index'))
 
 @app.route('/api/delete/<d_id>', methods=['POST'])
-def delete_background_deployment(d_id):
+def delete_deployment(d_id):
     if d_id in DEPLOYMENTS:
         if d_id in RUNNING_PROCESSES:
             try:
@@ -694,4 +694,5 @@ def delete_background_deployment(d_id):
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
