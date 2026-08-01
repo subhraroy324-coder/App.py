@@ -1,0 +1,15 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# Uploaded/hosted user instances & local data
+hosted_sites/
+*.db
+instance/
+
+# OS files
+.DS_Store
+Thumbs.db
