@@ -4,6 +4,7 @@ import time
 import shutil
 import subprocess
 import threading
+import traceback
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, session
 
 app = Flask(__name__)
@@ -11,7 +12,10 @@ app.secret_key = "vx_hostinger_ultimate_production_key"
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 SITES_DIR = os.path.join(BASE_DIR, "hosted_sites")
-os.makedirs(SITES_DIR, exist_ok=True)
+try:
+    os.makedirs(SITES_DIR, exist_ok=True)
+except Exception:
+    pass
 
 DEPLOYMENTS = {}
 RUNNING_PROCESSES = {}
@@ -567,81 +571,85 @@ def view_settings(d_id):
 
 @app.route('/api/create-deployment', methods=['POST'])
 def create_deployment():
-    source_type = request.form.get('source_type')
-    app_name = request.form.get('app_name', 'app').strip().lower().replace(' ', '-')
-    start_command = request.form.get('start_command', '').strip()
-    repo_url = request.form.get('repo_url', '').strip()
-    
-    d_id = f"dpl_{int(time.time())}"
-    site_folder = os.path.join(SITES_DIR, app_name)
-    os.makedirs(site_folder, exist_ok=True)
-    
-    timestamp = time.strftime('%X')
-    logs_buffer = f"[{timestamp}] Initializing VX Hostinger cluster daemon for '{app_name}' ({source_type})...<br>"
-    
-    if source_type in ['file', 'telegram_bot', 'discord_bot']:
-        uploaded_file = request.files.get('project_file')
-        if uploaded_file and uploaded_file.filename:
-            filename = uploaded_file.filename
-            file_path = os.path.join(site_folder, filename)
-            uploaded_file.save(file_path)
-            logs_buffer += f"[{timestamp}] Stored uploaded asset: {filename}<br>"
-            
-            if filename.endswith('.py') and not start_command:
-                start_command = f"python {filename}"
-            elif filename.endswith('.js') and not start_command:
-                start_command = f"node {filename}"
-        else:
-            logs_buffer += f"[{timestamp}] Workspace initialized successfully.<br>"
-            
-    elif source_type == 'github' and repo_url:
-        logs_buffer += f"[{timestamp}] Cloning git repository from {repo_url}...<br>"
-        try:
-            subprocess.run(["git", "clone", repo_url, site_folder], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            logs_buffer += f"[{timestamp}] Repository successfully cloned.<br>"
-            if not start_command and os.path.exists(os.path.join(site_folder, "package.json")):
-                start_command = "npm start"
-        except Exception as e:
-            logs_buffer += f"[{timestamp}] <span style='color:#f87171;'>Git Clone Error: {str(e)}</span><br>"
+    try:
+        source_type = request.form.get('source_type')
+        app_name = request.form.get('app_name', 'app').strip().lower().replace(' ', '-')
+        start_command = request.form.get('start_command', '').strip()
+        repo_url = request.form.get('repo_url', '').strip()
+        
+        d_id = f"dpl_{int(time.time())}"
+        site_folder = os.path.join(SITES_DIR, app_name)
+        os.makedirs(site_folder, exist_ok=True)
+        
+        timestamp = time.strftime('%X')
+        logs_buffer = f"[{timestamp}] Initializing VX Hostinger cluster daemon for '{app_name}' ({source_type})...<br>"
+        
+        if source_type in ['file', 'telegram_bot', 'discord_bot']:
+            uploaded_file = request.files.get('project_file')
+            if uploaded_file and uploaded_file.filename:
+                filename = uploaded_file.filename
+                file_path = os.path.join(site_folder, filename)
+                uploaded_file.save(file_path)
+                logs_buffer += f"[{timestamp}] Stored uploaded asset: {filename}<br>"
+                
+                if filename.endswith('.py') and not start_command:
+                    start_command = f"python {filename}"
+                elif filename.endswith('.js') and not start_command:
+                    start_command = f"node {filename}"
+            else:
+                logs_buffer += f"[{timestamp}] Workspace initialized successfully.<br>"
+                
+        elif source_type == 'github' and repo_url:
+            logs_buffer += f"[{timestamp}] Cloning git repository from {repo_url}...<br>"
+            try:
+                subprocess.run(["git", "clone", repo_url, site_folder], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                logs_buffer += f"[{timestamp}] Repository successfully cloned.<br>"
+                if not start_command and os.path.exists(os.path.join(site_folder, "package.json")):
+                    start_command = "npm start"
+            except Exception as e:
+                logs_buffer += f"[{timestamp}] <span style='color:#f87171;'>Git Clone Notice: {str(e)} (Git utility missing or invalid repo URL)</span><br>"
 
-    live_url = f"/view/{app_name}/"
-    
-    DEPLOYMENTS[d_id] = {
-        "name": app_name,
-        "source_type": source_type,
-        "status": "Building",
-        "url": live_url,
-        "start_command": start_command,
-        "folder": site_folder,
-        "logs": logs_buffer
-    }
+        live_url = f"/view/{app_name}/"
+        
+        DEPLOYMENTS[d_id] = {
+            "name": app_name,
+            "source_type": source_type,
+            "status": "Building",
+            "url": live_url,
+            "start_command": start_command,
+            "folder": site_folder,
+            "logs": logs_buffer
+        }
 
-    def execute_build():
-        time.sleep(1)
-        try:
-            if start_command:
-                DEPLOYMENTS[d_id]["logs"] += f"[{time.strftime('%X')}] Executing: {start_command}<br>"
-                process = subprocess.Popen(
-                    start_command, shell=True, cwd=site_folder,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-                )
-                RUNNING_PROCESSES[d_id] = process
-                time.sleep(2)
-                if process.poll() is not None:
-                    _, err = process.communicate()
-                    if err:
-                        DEPLOYMENTS[d_id]["status"] = "Failed"
-                        DEPLOYMENTS[d_id]["logs"] += f"<span style='color:#f87171;'>[Build Error] {err}</span><br>"
-                        return
+        def execute_build():
+            time.sleep(1)
+            try:
+                if start_command:
+                    DEPLOYMENTS[d_id]["logs"] += f"[{time.strftime('%X')}] Executing: {start_command}<br>"
+                    process = subprocess.Popen(
+                        start_command, shell=True, cwd=site_folder,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    )
+                    RUNNING_PROCESSES[d_id] = process
+                    time.sleep(2)
+                    if process.poll() is not None:
+                        _, err = process.communicate()
+                        if err:
+                            DEPLOYMENTS[d_id]["status"] = "Failed"
+                            DEPLOYMENTS[d_id]["logs"] += f"<span style='color:#f87171;'>[Build Error] {err}</span><br>"
+                            return
 
-            DEPLOYMENTS[d_id]["status"] = "Live"
-            DEPLOYMENTS[d_id]["logs"] += f"[{time.strftime('%X')}] <span style='color:#34d399;'>VX Hostinger instance is live and running!</span><br>"
-        except Exception as err:
-            DEPLOYMENTS[d_id]["status"] = "Failed"
-            DEPLOYMENTS[d_id]["logs"] += f"<span style='color:#f87171;'>Exception: {str(err)}</span><br>"
+                DEPLOYMENTS[d_id]["status"] = "Live"
+                DEPLOYMENTS[d_id]["logs"] += f"[{time.strftime('%X')}] <span style='color:#34d399;'>VX Hostinger instance is live and running!</span><br>"
+            except Exception as err:
+                DEPLOYMENTS[d_id]["status"] = "Failed"
+                DEPLOYMENTS[d_id]["logs"] += f"<span style='color:#f87171;'>Exception: {str(err)}</span><br>"
 
-    threading.Thread(target=execute_build).start()
-    return redirect(url_for('view_logs', d_id=d_id))
+        threading.Thread(target=execute_build).start()
+        return redirect(url_for('view_logs', d_id=d_id))
+    except Exception as e:
+        traceback.print_exc()
+        return f"Deployment error: {str(e)}", 500
 
 @app.route('/api/attach-domain')
 def attach_domain():
@@ -687,7 +695,10 @@ def delete_deployment(d_id):
                 pass
         folder = DEPLOYMENTS[d_id]["folder"]
         if os.path.exists(folder):
-            shutil.rmtree(folder, ignore_errors=True)
+            try:
+                shutil.rmtree(folder, ignore_errors=True)
+            except:
+                pass
         del DEPLOYMENTS[d_id]
         if d_id in DOMAINS_OWNED:
             del DOMAINS_OWNED[d_id]
