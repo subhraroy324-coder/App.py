@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: shayan-explorer-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    branch: main
+    plan: free
+    region: oregon
+    autoDeploy: true
