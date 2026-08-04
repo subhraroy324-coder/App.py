@@ -1,16 +1,45 @@
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 import json
-import os
 import smtplib
 import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import datetime
 import random
-import base64
+import os
 
 app = Flask(__name__)
 app.secret_key = 'kesh_aadar_secure_key_2026'
+
+# --- PERSISTENT STORAGE FOR VERCEL (/tmp) ---
+DB_FILE = '/tmp/kesh_db.json'
+
+def load_db():
+    default_data = {
+        "logo": "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80",
+        "products": [
+            {"id": 1, "name": "Aloe Neem Glow Face Wash", "category": "Skincare", "price": 349, "stock": 50, "status": "Live", "image": "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80", "desc": "Deep cleansing herbal formula for radiant skin."},
+            {"id": 2, "name": "Saffron Kumkumadi Night Serum", "category": "Skincare", "price": 799, "stock": 30, "status": "Live", "image": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=500&q=80", "desc": "Fades blemishes and restores natural skin glow."},
+            {"id": 3, "name": "Bhringraj Onion Hair Growth Oil", "category": "Haircare", "price": 499, "stock": 40, "status": "Live", "image": "https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?auto=format&fit=crop&w=500&q=80", "desc": "Stops hair fall and stimulates roots naturally."},
+            {"id": 4, "name": "Hibiscus & Shikakai Herbal Shampoo", "category": "Haircare", "price": 399, "stock": 45, "status": "Live", "image": "https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=500&q=80", "desc": "Nourishing sulfate-free cleanser for smooth hair."}
+        ],
+        "orders": [],
+        "blacklisted_ips": []
+    }
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return default_data
+    return default_data
+
+def save_db(data):
+    try:
+        with open(DB_FILE, 'w') as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"Error saving DB: {e}")
 
 # --- EMAIL CONFIGURATION ---
 SMTP_SERVER = "smtp.gmail.com"
@@ -18,40 +47,6 @@ SMTP_PORT = 587
 SMTP_EMAIL = "subhraroy324@gmail.com"
 SMTP_PASS = "idxv jjob guit vtfb"
 
-# --- STORAGE & DATA PERSISTENCE FOR VERCEL ---
-DATA_FILE = "/tmp/kesh_store_data.json"
-
-DEFAULT_PRODUCTS = [
-    {"id": 1, "name": "Aloe Neem Glow Face Wash", "category": "Skincare", "price": 349, "stock": 50, "image": "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80", "desc": "Deep cleansing herbal formula for radiant skin.", "status": "live"},
-    {"id": 2, "name": "Saffron Kumkumadi Night Serum", "category": "Skincare", "price": 799, "stock": 30, "image": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=500&q=80", "desc": "Fades blemishes and restores natural skin glow.", "status": "live"},
-    {"id": 3, "name": "Bhringraj Onion Hair Growth Oil", "category": "Haircare", "price": 499, "stock": 40, "image": "https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?auto=format&fit=crop&w=500&q=80", "desc": "Stops hair fall and stimulates roots naturally.", "status": "live"},
-    {"id": 4, "name": "Hibiscus & Shikakai Herbal Shampoo", "category": "Haircare", "price": 399, "stock": 45, "image": "https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=500&q=80", "desc": "Nourishing sulfate-free cleanser for smooth hair.", "status": "live"}
-]
-
-DEFAULT_LOGO = "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80"
-
-def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            pass
-    return {
-        "products": DEFAULT_PRODUCTS,
-        "orders": [],
-        "blacklisted_ips": [],
-        "logo": DEFAULT_LOGO
-    }
-
-def save_data(data):
-    try:
-        with open(DATA_FILE, 'w') as f:
-            json.dump(data, f)
-    except Exception as e:
-        print(f"Error saving data: {e}")
-
-# --- BACKGROUND EMAIL SENDER ---
 def send_order_email(recipient_email, name, order_id, amount, items, full_address):
     try:
         msg = MIMEMultipart('alternative')
@@ -86,11 +81,8 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
                 </ul>
 
                 <div style="text-align: center; margin-top: 30px;">
-                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: bold; font-size: 15px; display: inline-block; box-shadow: 0 5px 15px rgba(27, 67, 50, 0.3);">Check Live Order Status</a>
+                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: bold; font-size: 15px; display: inline-block;">Check Live Order Status</a>
                 </div>
-
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0 15px 0;">
-                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Contact support at subhraroy324@gmail.com</p>
             </div>
         </body>
         </html>
@@ -105,144 +97,137 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
     except Exception as e:
         print(f"Failed to send email: {e}")
 
-@app.after_request
-def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
-    response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
-    return response
-
 @app.before_request
 def check_ip_blacklist():
-    data = load_data()
+    db = load_db()
     client_ip = request.remote_addr
-    if client_ip in data.get('blacklisted_ips', []):
+    if client_ip in db.get('blacklisted_ips', []):
         return jsonify({"error": "Your IP has been blacklisted by administrator."}), 403
 
 # --- PUBLIC ROUTES ---
 @app.route('/')
 def index():
-    data = load_data()
-    # Filter only live products for storefront
-    live_products = [p for p in data['products'] if p.get('status', 'live') == 'live']
-    return render_template_string(TEMPLATE, products=live_products, logo=data['logo'])
+    db = load_db()
+    live_products = [p for p in db['products'] if p.get('status', 'Live') == 'Live']
+    return render_template_string(TEMPLATE, products=live_products, logo=db['logo'])
 
 @app.route('/place_order', methods=['POST'])
 def place_order():
-    store = load_data()
-    req_data = request.get_json()
+    db = load_db()
+    data = request.get_json()
     order_id = "KESH-" + str(random.randint(10000, 99999))
-    req_data['order_id'] = order_id
-    req_data['date'] = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p")
-    req_data['client_ip'] = request.remote_addr
-    req_data['status'] = 'Processing'  # Initial status: Processing -> Packaging -> Shipped -> Delivered
+    data['order_id'] = order_id
+    data['date'] = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p")
+    data['client_ip'] = request.remote_addr
+    data['status'] = 'Order Placed' # Initial Status
     
-    full_address = f"{req_data.get('street', '')}, Landmark: {req_data.get('landmark', '')}, {req_data.get('city', '')}, {req_data.get('state', '')} - {req_data.get('pincode', '')}"
-    req_data['full_address'] = full_address
+    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', '')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
+    data['full_address'] = full_address
     
-    store['orders'].append(req_data)
-    save_data(store)
+    db['orders'].insert(0, data)
+    save_db(db)
     
     email_thread = threading.Thread(
         target=send_order_email, 
-        args=(req_data['email'], req_data['name'], order_id, req_data['amount'], req_data['items'], full_address)
+        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address)
     )
     email_thread.start()
     
-    return jsonify({"status": "success", "order_id": order_id, "date": req_data['date']})
+    return jsonify({"status": "success", "order_id": order_id, "date": data['date']})
 
 @app.route('/order_success/<order_id>')
 def order_success_page(order_id):
-    store = load_data()
-    order = next((o for o in store['orders'] if o['order_id'] == order_id), None)
-    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, logo=store['logo'])
+    db = load_db()
+    order = next((o for o in db['orders'] if o['order_id'] == order_id), None)
+    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, logo=db['logo'])
 
 @app.route('/track_order')
 def track_order():
-    store = load_data()
+    db = load_db()
     q = request.args.get('q', '').strip()
-    for o in store['orders']:
+    for o in db['orders']:
         if q.upper() == o['order_id'] or q.lower() == o['email'].lower():
             return jsonify({"found": True, "order": o})
     return jsonify({"found": False})
 
-# --- ADMIN PANEL ROUTE ---
+# --- ADMIN PANEL ROUTES (/admin) ---
 @app.route('/admin')
 def admin_panel():
-    store = load_data()
-    return render_template_string(ADMIN_TEMPLATE, store=store)
+    db = load_db()
+    return render_template_string(ADMIN_TEMPLATE, db=db)
 
-@app.route('/api/admin/update_order_status', methods=['POST'])
+@app.route('/admin/api/update_order_status', methods=['POST'])
 def admin_update_order_status():
-    store = load_data()
+    db = load_db()
     data = request.get_json()
     order_id = data.get('order_id')
-    new_status = data.get('status') # Processing, Packaging, Shipped, Delivered
-    for o in store['orders']:
+    new_status = data.get('status') # 'Order Placed', 'Packaging', 'Shipped', 'Delivered'
+    for o in db['orders']:
         if o['order_id'] == order_id:
             o['status'] = new_status
-            save_data(store)
-            return jsonify({"status": "success"})
-    return jsonify({"error": "Order not found"}), 404
+            save_db(db)
+            return jsonify({"success": True})
+    return jsonify({"success": False}), 404
 
-@app.route('/api/admin/products', methods=['GET', 'POST', 'PUT', 'DELETE'])
+@app.route('/admin/api/save_logo', methods=['POST'])
+def admin_save_logo():
+    db = load_db()
+    data = request.get_json()
+    db['logo'] = data.get('logo_url')
+    save_db(db)
+    return jsonify({"success": True})
+
+@app.route('/admin/api/products', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def admin_manage_products():
-    store = load_data()
+    db = load_db()
     if request.method == 'GET':
-        return jsonify(store['products'])
+        return jsonify(db['products'])
     
     data = request.get_json()
     if request.method == 'POST':
-        # Add product
-        new_id = max([p['id'] for p in store['products']], default=0) + 1
-        new_product = {
+        # Add new product
+        new_id = max([p['id'] for p in db['products']], default=0) + 1
+        new_prod = {
             "id": new_id,
             "name": data.get('name'),
-            "category": data.get('category', 'General'),
+            "category": data.get('category', 'Skincare'),
             "price": float(data.get('price', 0)),
-            "stock": int(data.get('stock', 0)),
-            "image": data.get('image', 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=500&q=80'),
-            "desc": data.get('desc', ''),
-            "status": data.get('status', 'live') # 'live' or 'suspended'
+            "stock": int(data.get('stock', 10)),
+            "status": data.get('status', 'Live'),
+            "image": data.get('image'),
+            "desc": data.get('desc', '')
         }
-        store['products'].append(new_product)
-        save_data(store)
-        return jsonify({"status": "success", "product": new_product})
-        
+        db['products'].append(new_prod)
+        save_db(db)
+        return jsonify({"success": True, "product": new_prod})
+
     elif request.method == 'PUT':
         # Edit or Suspend product
         prod_id = int(data.get('id'))
-        for p in store['products']:
+        for p in db['products']:
             if p['id'] == prod_id:
                 p['name'] = data.get('name', p['name'])
                 p['category'] = data.get('category', p['category'])
                 p['price'] = float(data.get('price', p['price']))
                 p['stock'] = int(data.get('stock', p['stock']))
+                p['status'] = data.get('status', p['status']) # 'Live' or 'Suspended'
                 p['image'] = data.get('image', p['image'])
                 p['desc'] = data.get('desc', p['desc'])
-                if 'status' in data:
-                    p['status'] = data.get('status')
-                save_data(store)
-                return jsonify({"status": "success"})
-        return jsonify({"error": "Product not found"}), 404
+                save_db(db)
+                return jsonify({"success": True})
+        return jsonify({"success": False}), 404
 
     elif request.method == 'DELETE':
-        # Delete product
         prod_id = int(data.get('id'))
-        store['products'] = [p for p in store['products'] if p['id'] != prod_id]
-        save_data(store)
-        return jsonify({"status": "success"})
+        db['products'] = [p for p in db['products'] if p['id'] != prod_id]
+        save_db(db)
+        return jsonify({"success": True})
 
-@app.route('/api/admin/logo', methods=['POST'])
-def admin_update_logo():
-    store = load_data()
-    data = request.get_json()
-    new_logo = data.get('logo')
-    if new_logo:
-        store['logo'] = new_logo
-        save_data(store)
-        return jsonify({"status": "success", "logo": new_logo})
-    return jsonify({"error": "Invalid logo"}), 400
+@app.route('/admin/api/orders_list')
+def admin_orders_list():
+    db = load_db()
+    return jsonify(db['orders'])
+
 
 # --- FRONTEND TEMPLATE (STOREFRONT) ---
 TEMPLATE = """
@@ -260,43 +245,46 @@ TEMPLATE = """
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background-color: var(--cream); color: var(--text-dark); overflow-x: hidden; scroll-behavior: smooth; }
 
-        .reveal { opacity: 0; transform: translateY(40px); transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1); }
+        .reveal { opacity: 0; transform: translateY(40px); transition: all 0.9s cubic-bezier(0.16, 1, 0.3, 1); }
         .reveal.active { opacity: 1; transform: translateY(0); }
 
         header { position: fixed; top: 0; left: 0; width: 100%; background: rgba(250, 247, 240, 0.95); backdrop-filter: blur(12px); display: flex; justify-content: space-between; align-items: center; padding: 15px 30px; z-index: 1000; box-shadow: 0 4px 25px rgba(0,0,0,0.05); }
         .nav-left { display: flex; align-items: center; gap: 15px; }
         .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.3s; }
         .menu-btn:hover { transform: scale(1.1); }
+        
         .brand-container { display: flex; align-items: center; gap: 12px; cursor: pointer; }
         .logo-img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); }
         .logo { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: var(--green-primary); letter-spacing: 1px; text-transform: uppercase; }
         .logo span { color: var(--accent-gold); }
-        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: transform 0.2s; }
+        
+        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: transform 0.3s; }
         .cart-icon-container:hover { transform: scale(1.05); }
         .cart-badge { position: absolute; top: -5px; right: -5px; background: var(--green-light); color: white; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 50%; }
 
-        /* Butter-Smooth Sidebar Drawer */
-        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.4s; }
+        /* Smoothed Sidebar Drawer Animation */
+        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
         .sidebar-overlay.active { opacity: 1; visibility: visible; }
+        
         .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
         .sidebar.active { transform: translateX(380px); }
         .sidebar h3 { color: var(--green-primary); margin-bottom: 15px; font-size: 18px; }
-        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: background 0.2s, transform 0.2s; }
-        .sidebar button.menu-item:hover { background: #f1f3f5; transform: translateX(4px); }
+        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: background 0.2s; }
+        .sidebar button.menu-item:hover { background: var(--cream-dark); }
         .sidebar button.menu-item i { color: var(--accent-gold); width: 20px; }
         .sidebar button.btn-back { background: #555; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
         .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); transition: transform 0.2s; }
-        .close-sidebar:hover { transform: rotate(90deg); color: var(--green-primary); }
+        .close-sidebar:hover { transform: rotate(90deg); }
         .sidebar input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; outline: none; }
         .sidebar button.action-btn { width: 100%; padding: 12px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: transform 0.2s; }
-        .support-card:hover { transform: translateY(-2px); }
+        
+        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); }
 
         /* Hero */
         .hero { height: 80vh; display: flex; align-items: center; justify-content: center; text-align: center; background: radial-gradient(circle, #f3efea 0%, #faf7f0 75%); margin-top: 70px; padding: 0 20px; }
         .hero-content h1 { font-family: 'Playfair Display', serif; font-size: clamp(34px, 6vw, 54px); color: var(--green-primary); margin-bottom: 15px; }
-        .btn-primary { background: var(--green-primary); color: white; padding: 14px 38px; border-radius: 35px; text-decoration: none; font-weight: 600; border: none; cursor: pointer; display: inline-block; transition: 0.3s; }
-        .btn-primary:hover { background: var(--green-light); transform: translateY(-2px); }
+        .btn-primary { background: var(--green-primary); color: white; padding: 14px 38px; border-radius: 35px; text-decoration: none; font-weight: 600; border: none; cursor: pointer; display: inline-block; transition: all 0.3s; }
+        .btn-primary:hover { background: var(--green-light); transform: translateY(-2px); box-shadow: 0 5px 15px rgba(27,67,50,0.3); }
 
         .features-banner { background: var(--green-primary); color: white; display: flex; justify-content: space-around; padding: 20px; flex-wrap: wrap; gap: 15px; }
         .feature-item { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; }
@@ -304,10 +292,11 @@ TEMPLATE = """
         /* Products Grid */
         .container { max-width: 1200px; margin: 0 auto; padding: 50px 20px; }
         .product-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 30px; }
-        .product-card { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); transition: 0.3s; }
-        .product-card:hover { transform: translateY(-5px); }
+        .product-card { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); transition: transform 0.3s, box-shadow 0.3s; }
+        .product-card:hover { transform: translateY(-5px); box-shadow: 0 15px 35px rgba(0,0,0,0.1); }
         .product-img-container { height: 230px; overflow: hidden; background: #f7f5f0; }
-        .product-img-container img { width: 100%; height: 100%; object-fit: cover; }
+        .product-img-container img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.5s; }
+        .product-card:hover .product-img-container img { transform: scale(1.05); }
         .product-info { padding: 20px; }
         .price-row { display: flex; justify-content: space-between; align-items: center; margin: 15px 0; }
         .price { font-size: 22px; font-weight: 700; color: var(--green-light); }
@@ -333,6 +322,13 @@ TEMPLATE = """
         .bill-row.total { border-top: 1px dashed #ccc; padding-top: 8px; font-weight: bold; font-size: 16px; color: var(--green-primary); }
 
         .saved-addr-btn { background: #e8f5e9; color: #2e7d32; border: 1px dashed #2e7d32; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; width: 100%; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+        /* Tracking Timeline in Modal/Result */
+        .tracking-timeline { margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 10px; }
+        .step-item { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px; color: #777; font-weight: 500; }
+        .step-item.active { color: var(--green-primary); font-weight: 600; }
+        .step-circle { width: 24px; height: 24px; border-radius: 50%; background: #ddd; color: white; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+        .step-item.active .step-circle { background: var(--green-primary); }
 
         /* Footer */
         .main-footer { background-color: var(--green-primary); color: white; padding: 50px 30px 20px; margin-top: 60px; }
@@ -371,7 +367,6 @@ TEMPLATE = """
             <button class="menu-item" onclick="switchSidebarView('track')"><i class="fa-solid fa-map-location-dot"></i> Track Order</button>
             <button class="menu-item" onclick="switchSidebarView('support')"><i class="fa-solid fa-headset"></i> Help & Support</button>
             <button class="menu-item" onclick="switchSidebarView('faq')"><i class="fa-solid fa-circle-question"></i> Product FAQs</button>
-            <a href="/admin" class="menu-item" style="text-decoration:none; margin-top:20px; background:#1b4332; color:white;"><i class="fa-solid fa-gauge-high" style="color:var(--accent-gold);"></i> Admin Panel</a>
         </div>
 
         <div id="sidebar-track-view" style="display:none;">
@@ -394,7 +389,7 @@ TEMPLATE = """
             <button class="btn-back" onclick="switchSidebarView('main')"><i class="fa-solid fa-arrow-left"></i> Back</button>
             <h3>Frequently Asked Questions</h3>
             <h4 style="font-size: 13px; color: var(--green-primary);">1. What is the estimated dispatch time?</h4><p style="font-size: 12px; color: #666; margin-bottom: 12px;">Orders are dispatched within 24-48 hours.</p>
-            <h4 style="font-size: 13px; color: var(--green-primary);">2. How do I track my delivery?</h4><p style="font-size: 12px; color: #666; margin-bottom: 12px;">You can track live status via order ID in the tracking section.</p>
+            <h4 style="font-size: 13px; color: var(--green-primary);">2. How do I track my delivery?</h4><p style="font-size: 12px; color: #666; margin-bottom: 12px;">You will receive live tracking updates on your email and tracking portal.</p>
         </div>
     </div>
 
@@ -546,7 +541,6 @@ TEMPLATE = """
             updateCartUI();
 
             let img = document.getElementById('img-' + id);
-            if(!img) return;
             let flyer = img.cloneNode(true);
             flyer.className = 'fly-item';
             
@@ -567,8 +561,9 @@ TEMPLATE = """
         }
 
         function buyNow(id) { 
-            let p = productsData.find(x => x.id === id);
-            if(p) { cart = [p]; updateCartUI(); openCartModal(); }
+            cart = [productsData.find(x => x.id === id)]; 
+            updateCartUI(); 
+            openCartModal(); 
         }
 
         function openCartModal() { 
@@ -642,23 +637,18 @@ TEMPLATE = """
                         });
                     }
                 })
-                .catch(() => console.log("PIN code lookup unavailable"));
+                .catch(() => console.log("PIN lookup offline"));
             }
         }
 
         function checkSavedAddressAvailability() {
-            let saved = localStorage.getItem('kesh_saved_address');
-            if(saved) {
+            if(localStorage.getItem('kesh_saved_address')) {
                 document.getElementById('useSavedAddrBtn').style.display = 'flex';
             }
         }
 
         function saveAddressToStorage(data) {
-            localStorage.setItem('kesh_saved_address', JSON.stringify({
-                name: data.name, email: data.email, phone: data.phone,
-                pincode: data.pincode, city: data.city, state: data.state,
-                landmark: data.landmark, street: data.street
-            }));
+            localStorage.setItem('kesh_saved_address', JSON.stringify(data));
         }
 
         function loadSavedAddress() {
@@ -736,10 +726,26 @@ TEMPLATE = """
             fetch('/track_order?q=' + encodeURIComponent(q)).then(r => r.json()).then(data => {
                 let d = document.getElementById('track-result');
                 if(data.found) {
-                    let statusColor = data.order.status === 'Delivered' ? '#2e7d32' : '#d4a373';
-                    d.innerHTML = `<div style="background:#e8f5e9; padding:12px; border-radius:8px; font-size:13px;"><h4 style="color:#2e7d32;">Order: ${data.order.order_id}</h4><p>Status: <b style="color:${statusColor}">${data.order.status}</b></p></div>`;
+                    let o = data.order;
+                    let st = o.status || 'Order Placed';
+                    let steps = ['Order Placed', 'Packaging', 'Shipped', 'Delivered'];
+                    let currentIdx = steps.indexOf(st);
+                    if(currentIdx === -1) currentIdx = 0;
+
+                    let timelineHtml = '<div class="tracking-timeline">';
+                    steps.forEach((step, idx) => {
+                        let activeClass = idx <= currentIdx ? 'active' : '';
+                        timelineHtml += `
+                        <div class="step-item ${activeClass}">
+                            <div class="step-circle">${idx <= currentIdx ? '<i class="fa-solid fa-check" style="font-size:10px;"></i>' : idx+1}</div>
+                            <span>${step}</span>
+                        </div>`;
+                    });
+                    timelineHtml += '</div>';
+
+                    d.innerHTML = `<div style="background:#e8f5e9; padding:15px; border-radius:10px; font-size:13px;"><h4 style="color:#2e7d32; margin-bottom:5px;">Order: ${o.order_id}</h4><p><b>Status:</b> ${st}</p>${timelineHtml}</div>`;
                 } else { 
-                    d.innerHTML = '<p style="color:red; font-size:12px;">No order matching details found.</p>'; 
+                    d.innerHTML = '<p style="color:red; font-size:12px; margin-top:10px;">No order matching details found.</p>'; 
                 }
             });
         }
@@ -748,7 +754,7 @@ TEMPLATE = """
 </html>
 """
 
-# --- ENHANCED ORDER SUCCESS TEMPLATE ---
+# --- SUCCESS PAGE TEMPLATE ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -763,29 +769,20 @@ SUCCESS_TEMPLATE = """
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background-color: var(--cream); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
-        @keyframes successPop { 0% { transform: scale(0.4) rotate(-10deg); opacity: 0; } 70% { transform: scale(1.15) rotate(5deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); opacity: 1; } }
-        @keyframes pulseRing { 0% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.5); } 70% { box-shadow: 0 0 0 30px rgba(46, 125, 50, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); } }
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes popIn { 0% { transform: scale(0.3); opacity: 0; } 70% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes pulseGlow { 0% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(46, 125, 50, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); } }
 
-        .card { background: white; max-width: 580px; width: 100%; padding: 45px 35px; border-radius: 24px; box-shadow: 0 25px 50px rgba(27,67,50,0.1); text-align: center; animation: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-        .icon-box { font-size: 45px; color: white; background: #2e7d32; border-radius: 50%; width: 95px; height: 95px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 25px; animation: successPop 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, pulseRing 2s infinite; }
+        .card { background: white; max-width: 550px; width: 100%; padding: 40px 30px; border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); text-align: center; }
+        .icon-box { font-size: 50px; color: white; background: #2e7d32; border-radius: 50%; width: 90px; height: 90px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 25px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
         
-        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 34px; margin-bottom: 8px; }
+        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 32px; margin-bottom: 8px; }
         p.subtitle { color: #666; font-size: 14px; margin-bottom: 25px; }
 
-        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 22px; border-radius: 12px; margin-bottom: 25px; text-align: left; }
-        .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 13px; color: #444; }
+        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 12px; margin-bottom: 25px; text-align: left; }
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #444; }
 
-        /* Timeline Tracker on Success Page */
-        .tracker-steps { display: flex; justify-content: space-between; position: relative; margin: 25px 0; padding: 0 10px; }
-        .tracker-steps::before { content: ''; position: absolute; top: 14px; left: 30px; right: 30px; height: 3px; background: #ddd; z-index: 1; }
-        .step { position: relative; z-index: 2; text-align: center; }
-        .step-icon { width: 30px; height: 30px; border-radius: 50%; background: #ddd; color: white; display: flex; align-items: center; justify-content: center; font-size: 11px; margin: 0 auto 6px auto; transition: background 0.3s; }
-        .step.active .step-icon { background: #2e7d32; }
-        .step span { font-size: 11px; color: #666; font-weight: 500; }
-
-        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: background 0.2s, transform 0.2s; }
-        .btn-home:hover { background: #2d6a4f; transform: translateY(-2px); }
+        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: background 0.3s; }
+        .btn-home:hover { background: #2d6a4f; }
     </style>
 </head>
 <body>
@@ -793,35 +790,16 @@ SUCCESS_TEMPLATE = """
     <div class="card">
         <div class="icon-box"><i class="fa-solid fa-check"></i></div>
         <h1>Order Confirmed!</h1>
-        <p class="subtitle">Thank you for choosing Kesh Aadar. Your order has been registered.</p>
+        <p class="subtitle">Thank you for choosing Kesh Aadar. Your order is being processed.</p>
 
         {% if order %}
         <div class="order-info-box">
-            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:15px; color:var(--green-primary);">{{ order.order_id }}</b></div>
+            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order.order_id }}</b></div>
             <div class="info-row"><span>Customer:</span><b>{{ order.name }}</b></div>
             <div class="info-row"><span>Total Amount:</span><b>₹{{ order.amount }}</b></div>
             <div class="info-row"><span>Payment Mode:</span><b>{{ order.payment_type }}</b></div>
-            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 260px; text-align: right;">{{ order.full_address }}</span></div>
-        </div>
-
-        {% set status = order.status %}
-        <div class="tracker-steps">
-            <div class="step {% if status in ['Processing', 'Packaging', 'Shipped', 'Delivered'] %}active{% endif %}">
-                <div class="step-icon"><i class="fa-solid fa-clipboard-list"></i></div>
-                <span>Processing</span>
-            </div>
-            <div class="step {% if status in ['Packaging', 'Shipped', 'Delivered'] %}active{% endif %}">
-                <div class="step-icon"><i class="fa-solid fa-box"></i></div>
-                <span>Packaging</span>
-            </div>
-            <div class="step {% if status in ['Shipped', 'Delivered'] %}active{% endif %}">
-                <div class="step-icon"><i class="fa-solid fa-truck"></i></div>
-                <span>Shipped</span>
-            </div>
-            <div class="step {% if status == 'Delivered' %}active{% endif %}">
-                <div class="step-icon"><i class="fa-solid fa-house-chimney"></i></div>
-                <span>Delivered</span>
-            </div>
+            <div class="info-row"><span>Shipping Status:</span><b style="color:#2e7d32;">{{ order.status }}</b></div>
+            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 250px; text-align: right;">{{ order.full_address }}</span></div>
         </div>
         {% else %}
         <div class="order-info-box">
@@ -829,7 +807,7 @@ SUCCESS_TEMPLATE = """
         </div>
         {% endif %}
 
-        <p style="font-size: 12px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> Confirmation & tracking details sent to your registered email.</p>
+        <p style="font-size: 12px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> Official invoice & tracking details sent to your email.</p>
         
         <a href="/" class="btn-home">Continue Shopping</a>
     </div>
@@ -846,370 +824,342 @@ ADMIN_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | KESH AADAR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --cream: #FAF7F0; --cream-dark: #F3EFEA; --green-primary: #1b4332; --green-light: #2d6a4f; --accent-gold: #d4a373; --text-dark: #2b2b2b; }
+        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; --bg-light: #f4f6f8; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
-        body { background-color: var(--cream); color: var(--text-dark); display: flex; min-height: 100vh; }
+        body { background-color: var(--bg-light); color: #333; display: flex; height: 100vh; overflow: hidden; }
 
         /* Admin Sidebar */
-        .admin-sidebar { width: 280px; background: var(--green-primary); color: white; padding: 30px 20px; position: fixed; height: 100%; transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1); z-index: 1000; }
-        .admin-sidebar.closed { transform: translateX(-280px); }
-        .admin-brand { font-family: 'Playfair Display', serif; font-size: 22px; color: var(--accent-gold); margin-bottom: 35px; display: flex; align-items: center; justify-content: space-between; }
-        .admin-menu-btn { background: none; border: none; color: white; font-size: 20px; cursor: pointer; }
-        .admin-nav-item { padding: 12px 15px; border-radius: 8px; cursor: pointer; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 500; transition: background 0.2s; color: #ddd; text-decoration: none; }
-        .admin-nav-item:hover, .admin-nav-item.active { background: rgba(255,255,255,0.1); color: white; }
-        .admin-nav-item i { color: var(--accent-gold); width: 20px; }
+        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; display: flex; flex-direction: column; padding: 25px 20px; transition: transform 0.4s ease; z-index: 100; }
+        .admin-sidebar h2 { font-size: 20px; color: var(--accent-gold); margin-bottom: 30px; display: flex; align-items: center; justify-content: space-between; }
+        .admin-sidebar .close-sidebar-btn { display: none; font-size: 22px; cursor: pointer; }
+        .admin-nav-btn { background: none; border: none; color: #bbb; padding: 12px 15px; text-align: left; font-size: 14px; font-weight: 500; border-radius: 8px; cursor: pointer; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
+        .admin-nav-btn:hover, .admin-nav-btn.active { background: rgba(255,255,255,0.1); color: white; }
+        .admin-nav-btn i { color: var(--accent-gold); width: 20px; }
 
-        /* Toggle Button when sidebar closed */
-        .open-sidebar-floating { position: fixed; top: 20px; left: 20px; z-index: 999; background: var(--green-primary); color: white; border: none; width: 45px; height: 45px; border-radius: 50%; font-size: 18px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: none; align-items: center; justify-content: center; }
-
-        /* Main Content Area */
-        .admin-content { margin-left: 280px; flex: 1; padding: 40px; transition: margin-left 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
-        .admin-content.expanded { margin-left: 0; }
-
-        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 28px; margin-bottom: 25px; }
-        .card { background: white; border-radius: 16px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); margin-bottom: 25px; }
+        /* Main Admin Content */
+        .admin-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .admin-header { background: white; padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .mobile-toggle { display: none; font-size: 22px; background: none; border: none; cursor: pointer; color: var(--green-primary); }
         
+        .admin-content { flex: 1; overflow-y: auto; padding: 30px; }
+        .section-panel { display: none; }
+        .section-panel.active { display: block; }
+
+        .card { background: white; border-radius: 12px; padding: 25px; box-shadow: 0 5px 20px rgba(0,0,0,0.03); margin-bottom: 25px; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #f8f9fa; color: var(--green-primary); font-weight: 600; }
+        th { background: #fafafa; color: #555; font-weight: 600; }
         
         .badge { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-        .badge.live { background: #e8f5e9; color: #2e7d32; }
-        .badge.suspended { background: #ffebee; color: #c62828; }
+        .badge-live { background: #e8f5e9; color: #2e7d32; }
+        .badge-suspended { background: #ffebee; color: #c62828; }
 
-        .btn { padding: 8px 16px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; font-size: 12px; transition: opacity 0.2s; }
-        .btn:hover { opacity: 0.85; }
+        .btn { padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 12px; }
         .btn-green { background: var(--green-primary); color: white; }
         .btn-red { background: #c62828; color: white; }
-        .btn-gold { background: var(--accent-gold); color: white; }
+        .btn-outline { background: none; border: 1px solid #ccc; color: #333; }
 
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: var(--green-primary); }
-        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 13px; }
+        .form-control { width: 100%; padding: 10px 14px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; outline: none; }
 
-        .tab-section { display: none; }
-        .tab-section.active { display: block; }
-
-        @media(max-width: 900px) {
-            .admin-sidebar { transform: translateX(-280px); }
-            .admin-sidebar.mobile-open { transform: translateX(0); }
-            .admin-content { margin-left: 0; padding: 20px; }
-            .open-sidebar-floating { display: flex; }
+        @media (max-width: 768px) {
+            .admin-sidebar { position: fixed; height: 100%; left: -260px; }
+            .admin-sidebar.active { left: 0; }
+            .admin-sidebar .close-sidebar-btn { display: block; }
+            .mobile-toggle { display: block; }
         }
     </style>
 </head>
 <body>
 
-    <button class="open-sidebar-floating" onclick="toggleAdminSidebar()"><i class="fa-solid fa-bars"></i></button>
-
-    <!-- Admin Sidebar -->
     <div class="admin-sidebar" id="adminSidebar">
-        <div class="admin-brand">
-            <span>Kesh Admin</span>
-            <button class="admin-menu-btn" onclick="toggleAdminSidebar()"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="admin-nav-item active" onclick="switchTab('orders', this)"><i class="fa-solid fa-box-open"></i> Orders Management</div>
-        <div class="admin-nav-item" onclick="switchTab('products', this)"><i class="fa-solid fa-tags"></i> Products & Inventory</div>
-        <div class="admin-nav-item" onclick="switchTab('logo', this)"><i class="fa-solid fa-image"></i> Store Logo</div>
-        <a href="/" class="admin-nav-item" style="margin-top: 30px;"><i class="fa-solid fa-store"></i> View Storefront</a>
+        <h2>Kesh Aadar Admin <i class="fa-solid fa-xmark close-sidebar-btn" onclick="toggleAdminSidebar()"></i></h2>
+        <button class="admin-nav-btn active" onclick="switchTab('orders', this)"><i class="fa-solid fa-box-open"></i> Orders</button>
+        <button class="admin-nav-btn" onclick="switchTab('products', this)"><i class="fa-solid fa-store"></i> Products Inventory</button>
+        <button class="admin-nav-btn" onclick="switchTab('settings', this)"><i class="fa-solid fa-gear"></i> Website Logo</button>
+        <a href="/" target="_blank" class="admin-nav-btn" style="margin-top: auto; text-decoration: none;"><i class="fa-solid fa-external-link"></i> View Storefront</a>
     </div>
 
-    <!-- Admin Content -->
-    <div class="admin-content" id="adminContent">
-        
-        <!-- ORDERS TAB -->
-        <div id="tab-orders" class="tab-section active">
-            <h1>Customer Orders</h1>
-            <div class="card">
-                <div style="overflow-x:auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Order ID</th>
-                                <th>Customer Details</th>
-                                <th>Items & Amount</th>
-                                <th>Address</th>
-                                <th>Status Update</th>
-                            </tr>
-                        </thead>
-                        <tbody id="orders-table-body">
-                            <!-- Populated via JS -->
-                        </tbody>
-                    </table>
-                </div>
+    <div class="admin-main">
+        <div class="admin-header">
+            <div style="display:flex; align-items:center; gap:15px;">
+                <button class="mobile-toggle" onclick="toggleAdminSidebar()"><i class="fa-solid fa-bars"></i></button>
+                <h3 style="color:var(--green-primary); font-size: 18px;" id="header-title">Orders Management</h3>
             </div>
+            <span style="font-size: 13px; color: #666;"><i class="fa-solid fa-user-shield"></i> Administrator</span>
         </div>
 
-        <!-- PRODUCTS TAB -->
-        <div id="tab-products" class="tab-section">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;">
-                <h1>Products & Inventory</h1>
-                <button class="btn btn-green" onclick="openProductModal()"><i class="fa-solid fa-plus"></i> Add New Product</button>
-            </div>
-            <div class="card">
-                <div style="overflow-x:auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Image</th>
-                                <th>Product Name</th>
-                                <th>Category</th>
-                                <th>Price</th>
-                                <th>Stock</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="products-table-body">
-                            <!-- Populated via JS -->
-                        </tbody>
-                    </table>
+        <div class="admin-content">
+            
+            <!-- ORDERS PANEL -->
+            <div class="section-panel active" id="panel-orders">
+                <div class="card">
+                    <h3 style="margin-bottom: 15px; color:var(--green-primary);">Customer Orders</h3>
+                    <div style="overflow-x:auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Order ID</th>
+                                    <th>Customer Details</th>
+                                    <th>Items</th>
+                                    <th>Amount</th>
+                                    <th>Address</th>
+                                    <th>Status (Update)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orders-table-body">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- LOGO TAB -->
-        <div id="tab-logo" class="tab-section">
-            <h1>Store Logo Management</h1>
-            <div class="card" style="max-width: 500px;">
-                <div style="text-align:center; margin-bottom:20px;">
-                    <img id="current-logo-preview" src="{{ store.logo }}" style="width:100px; height:100px; object-fit:cover; border-radius:50%; border:3px solid var(--accent-gold);">
+            <!-- PRODUCTS / INVENTORY PANEL -->
+            <div class="section-panel" id="panel-products">
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <h3 style="color:var(--green-primary);">Inventory & Products</h3>
+                        <button class="btn btn-green" onclick="openAddProductModal()"><i class="fa-solid fa-plus"></i> Add Product</button>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Image</th>
+                                    <th>Name</th>
+                                    <th>Category</th>
+                                    <th>Price</th>
+                                    <th>Stock</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="products-table-body">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Logo Image URL</label>
-                    <input type="text" id="logo-url-input" value="{{ store.logo }}" placeholder="Paste image URL here">
-                </div>
-                <div class="form-group">
-                    <label>Or Upload Image (Drag & Drop or Select file)</label>
-                    <input type="file" id="logo-file-input" accept="image/*" onchange="convertLogoFile(this)">
-                </div>
-                <button class="btn btn-green" style="width:100%; margin-top:10px;" onclick="updateStoreLogo()">Save Logo</button>
             </div>
-        </div>
 
+            <!-- SETTINGS / LOGO PANEL -->
+            <div class="section-panel" id="panel-settings">
+                <div class="card" style="max-width: 500px;">
+                    <h3 style="margin-bottom: 15px; color:var(--green-primary);">Change Website Profile Logo</h3>
+                    <p style="font-size: 12px; color: #666; margin-bottom: 15px;">Paste your image direct URL or upload to an image hosting service and paste link below.</p>
+                    <label style="font-size: 12px; font-weight:600;">Logo Image URL:</label>
+                    <input type="text" id="logo-url-input" class="form-control" value="{{ db.logo }}" style="margin-top: 5px;">
+                    <button class="btn btn-green" onclick="saveLogo()">Update Logo</button>
+                </div>
+            </div>
+
+        </div>
     </div>
 
-    <!-- Product Modal (Add/Edit) -->
-    <div class="modal" id="productModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:3000; align-items:center; justify-content:center;">
-        <div style="background:white; max-width:500px; width:100%; padding:30px; border-radius:16px; position:relative;">
-            <span onclick="closeProductModal()" style="position:absolute; right:20px; top:20px; cursor:pointer; font-size:22px;">&times;</span>
-            <h3 id="modal-title" style="color:var(--green-primary); margin-bottom:20px;">Add New Product</h3>
-            <input type="hidden" id="edit-prod-id">
-            <div class="form-group">
-                <label>Product Name</label>
-                <input type="text" id="prod-name" placeholder="e.g. Herbal Hair Oil">
+    <!-- ADD/EDIT PRODUCT MODAL -->
+    <div class="modal" id="productModal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:none; justify-content:center; align-items:center; z-index:3000;">
+        <div style="background:white; width:100%; max-width:450px; padding:25px; border-radius:12px; position:relative;">
+            <span style="position:absolute; right:20px; top:20px; cursor:pointer; font-size:22px;" onclick="closeProductModal()">&times;</span>
+            <h3 id="modal-product-title" style="color:var(--green-primary); margin-bottom:15px;">Add Product</h3>
+            <input type="hidden" id="prod-edit-id">
+            <label style="font-size:12px; font-weight:600;">Product Name</label>
+            <input type="text" id="prod-name" class="form-control" style="margin-top:5px;">
+            <div style="display:flex; gap:10px;">
+                <div style="flex:1;"><label style="font-size:12px; font-weight:600;">Price (₹)</label><input type="number" id="prod-price" class="form-control" style="margin-top:5px;"></div>
+                <div style="flex:1;"><label style="font-size:12px; font-weight:600;">Stock</label><input type="number" id="prod-stock" class="form-control" style="margin-top:5px;"></div>
             </div>
-            <div class="form-group">
-                <label>Category</label>
-                <input type="text" id="prod-category" placeholder="e.g. Haircare">
-            </div>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                <div class="form-group">
-                    <label>Price (₹)</label>
-                    <input type="number" id="prod-price" placeholder="499">
-                </div>
-                <div class="form-group">
-                    <label>Stock Quantity</label>
-                    <input type="number" id="prod-stock" placeholder="50">
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Image URL</label>
-                <input type="text" id="prod-image" placeholder="https://images.unsplash.com/...">
-            </div>
-            <div class="form-group">
-                <label>Description</label>
-                <textarea id="prod-desc" rows="2" placeholder="Short description..."></textarea>
-            </div>
-            <button class="btn btn-green" style="width:100%; padding:12px;" onclick="saveProductData()">Save Product</button>
+            <label style="font-size:12px; font-weight:600;">Category</label>
+            <input type="text" id="prod-category" class="form-control" value="Skincare" style="margin-top:5px;">
+            <label style="font-size:12px; font-weight:600;">Image URL</label>
+            <input type="text" id="prod-image" class="form-control" style="margin-top:5px;">
+            <label style="font-size:12px; font-weight:600;">Description</label>
+            <textarea id="prod-desc" class="form-control" rows="2" style="margin-top:5px;"></textarea>
+            <button class="btn btn-green" style="width:100%; padding:12px;" onclick="submitProductForm()">Save Product</button>
         </div>
     </div>
 
     <script>
-        let storeData = {{ store | tojson }};
-
         function toggleAdminSidebar() {
-            let sidebar = document.getElementById('adminSidebar');
-            let content = document.getElementById('adminContent');
-            sidebar.classList.toggle('closed');
-            sidebar.classList.toggle('mobile-open');
-            content.classList.toggle('expanded');
+            document.getElementById('adminSidebar').classList.toggle('active');
         }
 
-        function switchTab(tabId, el) {
-            document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
-            document.querySelectorAll('.admin-nav-item').forEach(i => i.classList.remove('active'));
-            document.getElementById('tab-' + tabId).classList.add('active');
-            if(el) el.classList.add('active');
+        function switchTab(tab, btn) {
+            document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.admin-nav-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('panel-' + tab).classList.add('active');
+            btn.classList.add('active');
+            document.getElementById('header-title').innerText = btn.innerText;
+            if(window.innerWidth <= 768) toggleAdminSidebar();
         }
 
-        function renderOrders() {
-            let tbody = document.getElementById('orders-table-body');
-            tbody.innerHTML = '';
-            if(!storeData.orders || storeData.orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">No orders received yet.</td></tr>';
-                return;
-            }
-            storeData.orders.forEach(o => {
-                let itemsList = o.items.map(i => `<li>${i.name} (₹${i.price})</li>`).join('');
-                tbody.innerHTML += `
-                <tr>
-                    <td><b>${o.order_id}</b><br><small style="color:#666;">${o.date}</small></td>
-                    <td><b>${o.name}</b><br>${o.phone}<br><small>${o.email}</small></td>
-                    <td><ul style="padding-left:15px; margin-bottom:5px;">${itemsList}</ul><b>Total: ₹${o.amount}</b> (${o.payment_type})</td>
-                    <td><small>${o.full_address}</small></td>
-                    <td>
-                        <select onchange="updateOrderStatus('${o.order_id}', this.value)" style="padding:6px; border-radius:6px; font-size:12px; border:1px solid #ddd;">
-                            <option value="Processing" ${o.status==='Processing'?'selected':''}>Processing</option>
-                            <option value="Packaging" ${o.status==='Packaging'?'selected':''}>Packaging</option>
-                            <option value="Shipped" ${o.status==='Shipped'?'selected':''}>Shipped</option>
-                            <option value="Delivered" ${o.status==='Delivered'?'selected':''}>Delivered</option>
-                        </select>
-                    </td>
-                </tr>`;
+        // Fetch Orders
+        function loadOrders() {
+            fetch('/admin/api/orders_list')
+            .then(res => res.json())
+            .then(orders => {
+                let tbody = document.getElementById('orders-table-body');
+                tbody.innerHTML = '';
+                if(orders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#888;">No orders received yet.</td></tr>';
+                    return;
+                }
+                orders.forEach(o => {
+                    let itemsStr = o.items.map(i => `${i.name} (₹${i.price})`).join(', ');
+                    let statuses = ['Order Placed', 'Packaging', 'Shipped', 'Delivered'];
+                    let selectHtml = `<select class="form-control" style="margin:0; padding:6px;" onchange="updateOrderStatus('${o.order_id}', this.value)">`;
+                    statuses.forEach(st => {
+                        let sel = (o.status === st) ? 'selected' : '';
+                        selectHtml += `<option value="${st}" ${sel}>${st}</option>`;
+                    });
+                    selectHtml += `</select>`;
+
+                    tbody.innerHTML += `
+                    <tr>
+                        <td><b>${o.order_id}</b><br><small style="color:#777;">${o.date}</small></td>
+                        <td><b>${o.name}</b><br>${o.phone}<br>${o.email}</td>
+                        <td><small>${itemsStr}</small></td>
+                        <td><b>₹${o.amount}</b><br><small>${o.payment_type}</small></td>
+                        <td><small>${o.full_address}</small></td>
+                        <td>${selectHtml}</td>
+                    </tr>`;
+                });
             });
         }
 
-        function updateOrderStatus(orderId, newStatus) {
-            fetch('/api/admin/update_order_status', {
+        function updateOrderStatus(orderId, status) {
+            fetch('/admin/api/update_order_status', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({order_id: orderId, status: newStatus})
-            }).then(r => r.json()).then(res => {
-                if(res.status === 'success') {
-                    let ord = storeData.orders.find(x => x.order_id === orderId);
-                    if(ord) ord.status = newStatus;
-                }
+                body: JSON.stringify({order_id: orderId, status: status})
+            }).then(r => r.json()).then(d => {
+                if(d.success) alert("Order status updated successfully!");
             });
         }
 
-        function renderProducts() {
-            let tbody = document.getElementById('products-table-body');
-            tbody.innerHTML = '';
-            storeData.products.forEach(p => {
-                let isLive = (p.status || 'live') === 'live';
-                tbody.innerHTML += `
-                <tr>
-                    <td><img src="${p.image}" style="width:45px; height:45px; object-fit:cover; border-radius:8px;"></td>
-                    <td><b>${p.name}</b></td>
-                    <td>${p.category || 'General'}</td>
-                    <td>₹${p.price}</td>
-                    <td>${p.stock}</td>
-                    <td><span class="badge ${isLive ? 'live' : 'suspended'}">${isLive ? 'Live' : 'Suspended'}</span></td>
-                    <td>
-                        <button class="btn btn-gold" onclick="editProduct(${p.id})"><i class="fa-solid fa-pen"></i></button>
-                        <button class="btn ${isLive ? 'btn-red' : 'btn-green'}" onclick="toggleSuspend(${p.id})">${isLive ? 'Suspend' : 'Make Live'}</button>
-                        <button class="btn btn-red" onclick="deleteProduct(${p.id})"><i class="fa-solid fa-trash"></i></button>
-                    </td>
-                </tr>`;
+        // Fetch Products
+        function loadProducts() {
+            fetch('/admin/api/products')
+            .then(res => res.json())
+            .then(products => {
+                let tbody = document.getElementById('products-table-body');
+                tbody.innerHTML = '';
+                products.forEach(p => {
+                    let isLive = (p.status || 'Live') === 'Live';
+                    let badgeClass = isLive ? 'badge-live' : 'badge-suspended';
+                    let toggleText = isLive ? 'Suspend' : 'Make Live';
+                    let toggleBtnClass = isLive ? 'btn-red' : 'btn-green';
+
+                    tbody.innerHTML += `
+                    <tr>
+                        <td><img src="${p.image}" width="40" height="40" style="object-fit:cover; border-radius:6px;"></td>
+                        <td><b>${p.name}</b></td>
+                        <td>${p.category}</td>
+                        <td>₹${p.price}</td>
+                        <td>${p.stock}</td>
+                        <td><span class="badge ${badgeClass}">${p.status || 'Live'}</span></td>
+                        <td>
+                            <button class="btn btn-outline" onclick='openEditProduct(${JSON.stringify(p)})'>Edit</button>
+                            <button class="btn ${toggleBtnClass}" onclick="toggleProductStatus(${p.id}, '${isLive ? 'Suspended' : 'Live'}')">${toggleText}</button>
+                            <button class="btn btn-red" onclick="deleteProduct(${p.id})"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>`;
+                });
             });
         }
 
-        function openProductModal(id = null) {
+        function openAddProductModal() {
+            document.getElementById('modal-product-title').innerText = 'Add New Product';
+            document.getElementById('prod-edit-id').value = '';
+            document.getElementById('prod-name').value = '';
+            document.getElementById('prod-price').value = '';
+            document.getElementById('prod-stock').value = '';
+            document.getElementById('prod-category').value = 'Skincare';
+            document.getElementById('prod-image').value = '';
+            document.getElementById('prod-desc').value = '';
             document.getElementById('productModal').style.display = 'flex';
-            if(id) {
-                let p = storeData.products.find(x => x.id === id);
-                document.getElementById('modal-title').innerText = 'Edit Product';
-                document.getElementById('edit-prod-id').value = p.id;
-                document.getElementById('prod-name').value = p.name;
-                document.getElementById('prod-category').value = p.category || '';
-                document.getElementById('prod-price').value = p.price;
-                document.getElementById('prod-stock').value = p.stock;
-                document.getElementById('prod-image').value = p.image;
-                document.getElementById('prod-desc').value = p.desc || '';
-            } else {
-                document.getElementById('modal-title').innerText = 'Add New Product';
-                document.getElementById('edit-prod-id').value = '';
-                document.getElementById('prod-name').value = '';
-                document.getElementById('prod-category').value = '';
-                document.getElementById('prod-price').value = '';
-                document.getElementById('prod-stock').value = '';
-                document.getElementById('prod-image').value = '';
-                document.getElementById('prod-desc').value = '';
-            }
+        }
+
+        function openEditProduct(p) {
+            document.getElementById('modal-product-title').innerText = 'Edit Product';
+            document.getElementById('prod-edit-id').value = p.id;
+            document.getElementById('prod-name').value = p.name;
+            document.getElementById('prod-price').value = p.price;
+            document.getElementById('prod-stock').value = p.stock;
+            document.getElementById('prod-category').value = p.category;
+            document.getElementById('prod-image').value = p.image;
+            document.getElementById('prod-desc').value = p.desc;
+            document.getElementById('productModal').style.display = 'flex';
         }
 
         function closeProductModal() {
             document.getElementById('productModal').style.display = 'none';
         }
 
-        function saveProductData() {
-            let id = document.getElementById('edit-prod-id').value;
+        function submitProductForm() {
+            let id = document.getElementById('prod-edit-id').value;
             let payload = {
+                id: id ? parseInt(id) : null,
                 name: document.getElementById('prod-name').value,
-                category: document.getElementById('prod-category').value,
                 price: document.getElementById('prod-price').value,
                 stock: document.getElementById('prod-stock').value,
+                category: document.getElementById('prod-category').value,
                 image: document.getElementById('prod-image').value,
-                desc: document.getElementById('prod-desc').value
+                desc: document.getElementById('prod-desc').value,
+                status: 'Live'
             };
 
             let method = id ? 'PUT' : 'POST';
-            if(id) payload.id = parseInt(id);
-
-            fetch('/api/admin/products', {
+            fetch('/admin/api/products', {
                 method: method,
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload)
-            }).then(r => r.json()).then(res => {
-                location.reload();
+            }).then(r => r.json()).then(d => {
+                if(d.success) {
+                    closeProductModal();
+                    loadProducts();
+                }
             });
         }
 
-        function editProduct(id) {
-            openProductModal(id);
-        }
-
-        function toggleSuspend(id) {
-            let p = storeData.products.find(x => x.id === id);
-            let newStatus = (p.status || 'live') === 'live' ? 'suspended' : 'live';
-            fetch('/api/admin/products', {
+        function toggleProductStatus(id, newStatus) {
+            fetch('/admin/api/products', {
                 method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({id: id, status: newStatus})
-            }).then(() => location.reload());
-        }
-
-        function deleteProduct(id) {
-            if(confirm('Are you sure you want to delete this product?')) {
-                fetch('/api/admin/products', {
-                    method: 'DELETE',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({id: id})
-                }).then(() => location.reload());
-            }
-        }
-
-        function convertLogoFile(input) {
-            if(input.files && input.files[0]) {
-                let reader = new FileReader();
-                reader.onload = function(e) {
-                    document.getElementById('logo-url-input').value = e.target.result;
-                    document.getElementById('current-logo-preview').src = e.target.result;
-                }
-                reader.readAsDataURL(input.files[0]);
-            }
-        }
-
-        function updateStoreLogo() {
-            let logo = document.getElementById('logo-url-input').value;
-            fetch('/api/admin/logo', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({logo: logo})
-            }).then(r => r.json()).then(res => {
-                if(res.status === 'success') {
-                    alert('Logo updated successfully!');
-                    location.reload();
-                }
+            }).then(r => r.json()).then(d => {
+                if(d.success) loadProducts();
             });
         }
 
-        renderOrders();
-        renderProducts();
+        function deleteProduct(id) {
+            if(confirm("Are you sure you want to delete this product?")) {
+                fetch('/admin/api/products', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: id})
+                }).then(r => r.json()).then(d => {
+                    if(d.success) loadProducts();
+                });
+            }
+        }
+
+        function saveLogo() {
+            let logoUrl = document.getElementById('logo-url-input').value;
+            fetch('/admin/api/save_logo', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({logo_url: logoUrl})
+            }).then(r => r.json()).then(d => {
+                if(d.success) alert("Website logo updated successfully!");
+            });
+        }
+
+        // Initial Load
+        loadOrders();
+        loadProducts();
     </script>
 </body>
 </html>
