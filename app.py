@@ -15,7 +15,7 @@ app.secret_key = 'kesh_aadar_secure_key_2026'
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_EMAIL = "subhraroy324@gmail.com"
-SMTP_PASS = "azku hebm gpsr pggo"
+SMTP_PASS = "azkuhebmgpsrpggo"
 
 # --- GLOBAL STORAGE ---
 SITE_LOGO = "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80"
