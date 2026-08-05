@@ -17,61 +17,19 @@ SMTP_PORT = 587
 SMTP_EMAIL = "subhraroy324@gmail.com"
 SMTP_PASS = "azku hebm gpsr pggo"
 
-# --- IN-MEMORY STORAGE (Serverless state) ---
-LOGO_DATA = "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80"
-
+# --- DATABASE & STORAGE ---
 PRODUCTS = [
-    {
-        "id": 1, 
-        "name": "Aloe Neem Glow Face Wash", 
-        "category": "Skincare", 
-        "price": 349, 
-        "stock": 50, 
-        "image": "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80", 
-        "video": "",
-        "desc": "Deep cleansing herbal formula for radiant skin.",
-        "status": "active"
-    },
-    {
-        "id": 2, 
-        "name": "Saffron Kumkumadi Night Serum", 
-        "category": "Skincare", 
-        "price": 799, 
-        "stock": 30, 
-        "image": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=500&q=80", 
-        "video": "",
-        "desc": "Fades blemishes and restores natural skin glow.",
-        "status": "active"
-    },
-    {
-        "id": 3, 
-        "name": "Bhringraj Onion Hair Growth Oil", 
-        "category": "Haircare", 
-        "price": 499, 
-        "stock": 40, 
-        "image": "https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?auto=format&fit=crop&w=500&q=80", 
-        "video": "",
-        "desc": "Stops hair fall and stimulates roots naturally.",
-        "status": "active"
-    },
-    {
-        "id": 4, 
-        "name": "Hibiscus & Shikakai Herbal Shampoo", 
-        "category": "Haircare", 
-        "price": 399, 
-        "stock": 45, 
-        "image": "https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=500&q=80", 
-        "video": "",
-        "desc": "Nourishing sulfate-free cleanser for smooth hair.",
-        "status": "active"
-    }
+    {"id": 1, "name": "Aloe Neem Glow Face Wash", "category": "Skincare", "price": 349, "stock": 50, "image": "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80", "desc": "Deep cleansing herbal formula for radiant skin.", "status": "Live"},
+    {"id": 2, "name": "Saffron Kumkumadi Night Serum", "category": "Skincare", "price": 799, "stock": 30, "image": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=500&q=80", "desc": "Fades blemishes and restores natural skin glow.", "status": "Live"},
+    {"id": 3, "name": "Bhringraj Onion Hair Growth Oil", "category": "Haircare", "price": 499, "stock": 40, "image": "https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?auto=format&fit=crop&w=500&q=80", "desc": "Stops hair fall and stimulates roots naturally.", "status": "Live"},
+    {"id": 4, "name": "Hibiscus & Shikakai Herbal Shampoo", "category": "Haircare", "price": 399, "stock": 45, "image": "https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=500&q=80", "desc": "Nourishing sulfate-free cleanser for smooth hair.", "status": "Live"}
 ]
 
 ORDERS = []
 BLACKLISTED_IPS = []
 
 # --- BACKGROUND EMAIL SENDER ---
-def send_order_email(recipient_email, name, order_id, amount, items, full_address):
+def send_order_email(recipient_email, name, order_id, amount, items, full_address, payment_type):
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f"Order Confirmed: {order_id} - KESH AADAR"
@@ -79,7 +37,7 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
         msg['To'] = recipient_email
 
         items_html = "".join([f"<li><b>{i['name']}</b> - ₹{i['price']}</li>" for i in items])
-        track_url = f"https://{request.host}/order_success/{order_id}" if request.host else f"http://127.0.0.1:5000/order_success/{order_id}"
+        track_url = f"https://{request.host}/order_success/{order_id}"
 
         html_content = f"""
         <html>
@@ -90,12 +48,12 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
                 <h2 style="color: #1b4332; font-size: 22px;">Thank you for your order, {name}!</h2>
-                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your order has been placed successfully. We are currently preparing your botanical items for dispatch.</p>
+                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your order has been placed successfully and is being prepared.</p>
                 
                 <div style="background: #F3EFEA; padding: 20px; border-radius: 12px; margin: 25px 0; border: 1px dashed #d4a373;">
                     <p style="margin: 0; color: #666; font-size: 12px; text-transform: uppercase; font-weight: bold;">Order Reference ID</p>
                     <h3 style="margin: 8px 0; font-size: 28px; color: #1b4332; font-family: monospace;">{order_id}</h3>
-                    <p style="margin: 5px 0; color: #333; font-size: 14px; font-weight: 600;">Total Payable: ₹{amount}</p>
+                    <p style="margin: 5px 0; color: #333; font-size: 14px; font-weight: 600;">Total Amount: ₹{amount} ({payment_type})</p>
                     <p style="margin: 5px 0 0 0; color: #666; font-size: 13px;"><b>Shipping To:</b> {full_address}</p>
                 </div>
 
@@ -105,11 +63,11 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
                 </ul>
 
                 <div style="text-align: center; margin-top: 30px;">
-                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: bold; font-size: 15px; display: inline-block; box-shadow: 0 5px 15px rgba(27, 67, 50, 0.3);">Check Live Order Status</a>
+                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: bold; font-size: 15px; display: inline-block; box-shadow: 0 5px 15px rgba(27, 67, 50, 0.3);">Track Live Order Status</a>
                 </div>
 
                 <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0 15px 0;">
-                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Reply directly to this email or contact customer support at subhraroy324@gmail.com</p>
+                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Reply directly to this email or contact customer support.</p>
             </div>
         </body>
         </html>
@@ -121,7 +79,6 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
         server.login(SMTP_EMAIL, SMTP_PASS)
         server.sendmail(SMTP_EMAIL, recipient_email, msg.as_string())
         server.quit()
-        print(f"Confirmation email successfully delivered to {recipient_email}")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
@@ -132,17 +89,11 @@ def add_cors_headers(response):
     response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
     return response
 
-@app.before_request
-def check_ip_blacklist():
-    client_ip = request.remote_addr
-    if client_ip in BLACKLISTED_IPS:
-        return jsonify({"error": "Your IP has been blacklisted by administrator."}), 403
-
-# --- PUBLIC ROUTES ---
+# --- ROUTES ---
 @app.route('/')
 def index():
-    active_products = [p for p in PRODUCTS if p.get('status', 'active') == 'active']
-    return render_template_string(TEMPLATE, products=active_products, logo_url=LOGO_DATA)
+    active_products = [p for p in PRODUCTS if p.get('status', 'Live') == 'Live']
+    return render_template_string(TEMPLATE, products=active_products)
 
 @app.route('/place_order', methods=['POST'])
 def place_order():
@@ -151,7 +102,7 @@ def place_order():
     data['order_id'] = order_id
     data['date'] = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p")
     data['client_ip'] = request.remote_addr
-    data['status_step'] = 'Order Placed' # Order Placed -> Packaging -> Shipped -> Delivered
+    data['fulfillment_status'] = 'Order Placed' # Order Placed -> Packaging -> Shifting -> Delivered
     
     full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', '')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
     data['full_address'] = full_address
@@ -160,16 +111,16 @@ def place_order():
     
     email_thread = threading.Thread(
         target=send_order_email, 
-        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address)
+        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address, data['payment_type'])
     )
     email_thread.start()
     
-    return jsonify({"status": "success", "order_id": order_id, "date": data['date']})
+    return jsonify({"status": "success", "order_id": order_id})
 
 @app.route('/order_success/<order_id>')
 def order_success_page(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
-    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, logo_url=LOGO_DATA)
+    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id)
 
 @app.route('/track_order')
 def track_order():
@@ -182,81 +133,66 @@ def track_order():
 # --- ADMIN PANEL ROUTE ---
 @app.route('/admin')
 def admin_panel():
-    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, logo_url=LOGO_DATA)
+    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS)
 
-@app.route('/api/admin/logo', methods=['POST'])
-def admin_update_logo():
-    global LOGO_DATA
-    if 'logo_file' in request.files:
-        file = request.files['logo_file']
-        if file.filename != '':
-            encoded = base64.b64encode(file.read()).decode('utf-8')
-            mime = file.mimetype or 'image/jpeg'
-            LOGO_DATA = f"data:{mime};base64,{encoded}"
-    return redirect(url_for('admin_panel'))
+@app.route('/admin/update_status', methods=['POST'])
+def admin_update_status():
+    d = request.get_json()
+    oid = d.get('order_id')
+    new_status = d.get('status')
+    for o in ORDERS:
+        if o['order_id'] == oid:
+            o['fulfillment_status'] = new_status
+            return jsonify({"success": True})
+    return jsonify({"success": False}), 404
 
-@app.route('/api/admin/products', methods=['POST'])
-def admin_add_product():
-    global PRODUCTS
+@app.route('/admin/save_product', methods=['POST'])
+def admin_save_product():
+    pid = request.form.get('id')
     name = request.form.get('name')
     category = request.form.get('category')
     price = float(request.form.get('price', 0))
     stock = int(request.form.get('stock', 0))
-    desc = request.form.get('desc', '')
+    desc = request.form.get('desc')
+    status = request.form.get('status', 'Live')
     
-    image_url = "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80"
-    if 'image_file' in request.files:
-        img_file = request.files['image_file']
-        if img_file.filename != '':
-            enc = base64.b64encode(img_file.read()).decode('utf-8')
-            image_url = f"data:{img_file.mimetype or 'image/jpeg'};base64,{enc}"
+    image_url = request.form.get('existing_image', '')
+    file = request.files.get('image_file')
+    if file and file.filename != '':
+        img_bytes = file.read()
+        encoded = base64.b64encode(img_bytes).decode('utf-8')
+        image_url = f"data:{file.content_type};base64,{encoded}"
 
-    video_url = ""
-    if 'video_file' in request.files:
-        vid_file = request.files['video_file']
-        if vid_file.filename != '':
-            enc_v = base64.b64encode(vid_file.read()).decode('utf-8')
-            video_url = f"data:{vid_file.mimetype or 'video/mp4'};base64,{enc_v}"
+    if pid: # Edit
+        for p in PRODUCTS:
+            if p['id'] == int(pid):
+                p['name'] = name
+                p['category'] = category
+                p['price'] = price
+                p['stock'] = stock
+                p['desc'] = desc
+                p['status'] = status
+                if image_url:
+                    p['image'] = image_url
+    else: # Add New
+        new_id = max([p['id'] for p in PRODUCTS], default=0) + 1
+        PRODUCTS.append({
+            "id": new_id,
+            "name": name,
+            "category": category,
+            "price": price,
+            "stock": stock,
+            "image": image_url or "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=500&q=80",
+            "desc": desc,
+            "status": status
+        })
+    return redirect('/admin')
 
-    new_id = max([p['id'] for p in PRODUCTS], default=0) + 1
-    PRODUCTS.append({
-        "id": new_id,
-        "name": name,
-        "category": category,
-        "price": price,
-        "stock": stock,
-        "desc": desc,
-        "image": image_url,
-        "video": video_url,
-        "status": "active"
-    })
-    return redirect(url_for('admin_panel'))
-
-@app.route('/api/admin/products/<int:prod_id>/update', methods=['POST'])
-def admin_update_product(prod_id):
+@app.route('/admin/delete_product/<int:pid>', methods=['POST'])
+def admin_delete_product(pid):
     global PRODUCTS
-    for p in PRODUCTS:
-        if p['id'] == prod_id:
-            p['price'] = float(request.form.get('price', p['price']))
-            p['stock'] = int(request.form.get('stock', p['stock']))
-            p['status'] = request.form.get('status', p['status'])
-    return redirect(url_for('admin_panel'))
-
-@app.route('/api/admin/products/<int:prod_id>/delete', methods=['POST'])
-def admin_delete_product(prod_id):
-    global PRODUCTS
-    PRODUCTS = [p for p in PRODUCTS if p['id'] != prod_id]
-    return redirect(url_for('admin_panel'))
-
-@app.route('/api/admin/orders/<order_id>/status', methods=['POST'])
-def admin_update_order_status(order_id):
-    data = request.get_json()
-    new_status = data.get('status')
-    for o in ORDERS:
-        if o['order_id'] == order_id:
-            o['status_step'] = new_status
-            return jsonify({"status": "success"})
-    return jsonify({"status": "not_found"}), 404
+    PRODUCTS = [p for p in PRODUCTS if p['id'] != pid]
+    return redirect('/admin')
 
 
 # --- FRONTEND TEMPLATE ---
@@ -280,32 +216,29 @@ TEMPLATE = """
 
         header { position: fixed; top: 0; left: 0; width: 100%; background: rgba(250, 247, 240, 0.95); backdrop-filter: blur(12px); display: flex; justify-content: space-between; align-items: center; padding: 15px 30px; z-index: 1000; box-shadow: 0 4px 25px rgba(0,0,0,0.05); }
         .nav-left { display: flex; align-items: center; gap: 15px; }
-        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.2s; }
+        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.3s; }
         .menu-btn:hover { transform: scale(1.1); }
         .brand-container { display: flex; align-items: center; gap: 12px; cursor: pointer; }
-        .logo-img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); }
         .logo { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: var(--green-primary); letter-spacing: 1px; text-transform: uppercase; }
         .logo span { color: var(--accent-gold); }
-        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: background 0.3s; }
-        .cart-icon-container:hover { background: #e5dfd5; }
+        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; }
         .cart-badge { position: absolute; top: -5px; right: -5px; background: var(--green-light); color: white; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 50%; }
 
-        /* Smooth Drawer */
+        /* Drawer Animation */
         .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
         .sidebar-overlay.active { opacity: 1; visibility: visible; }
-        
-        .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
+        .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
         .sidebar.active { transform: translateX(380px); }
         .sidebar h3 { color: var(--green-primary); margin-bottom: 15px; font-size: 18px; }
-        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
-        .sidebar button.menu-item:hover { background: var(--cream-dark); }
+        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: background 0.2s; }
+        .sidebar button.menu-item:hover { background: #f1f3f5; }
         .sidebar button.menu-item i { color: var(--accent-gold); width: 20px; }
         .sidebar button.btn-back { background: #555; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
-        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); }
+        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); transition: transform 0.2s; }
+        .close-sidebar:hover { transform: rotate(90deg); }
         .sidebar input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; outline: none; }
         .sidebar button.action-btn { width: 100%; padding: 12px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: transform 0.2s; }
-        .support-card:hover { transform: translateX(3px); }
+        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); }
 
         /* Hero */
         .hero { height: 80vh; display: flex; align-items: center; justify-content: center; text-align: center; background: radial-gradient(circle, #f3efea 0%, #faf7f0 75%); margin-top: 70px; padding: 0 20px; }
@@ -321,16 +254,14 @@ TEMPLATE = """
         .product-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 30px; }
         .product-card { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); transition: 0.3s; }
         .product-card:hover { transform: translateY(-5px); }
-        .product-media-container { height: 230px; overflow: hidden; background: #f7f5f0; position: relative; }
-        .product-media-container img, .product-media-container video { width: 100%; height: 100%; object-fit: cover; }
+        .product-img-container { height: 230px; overflow: hidden; background: #f7f5f0; }
+        .product-img-container img, .product-img-container video { width: 100%; height: 100%; object-fit: cover; }
         .product-info { padding: 20px; }
         .price-row { display: flex; justify-content: space-between; align-items: center; margin: 15px 0; }
         .price { font-size: 22px; font-weight: 700; color: var(--green-light); }
         .btn-group { display: flex; gap: 10px; }
-        .btn-cart { flex: 1; padding: 10px; background: var(--cream-dark); color: var(--green-primary); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
-        .btn-cart:hover { background: #e5dfd5; }
-        .btn-buy { flex: 1; padding: 10px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
-        .btn-buy:hover { background: var(--green-light); }
+        .btn-cart { flex: 1; padding: 10px; background: var(--cream-dark); color: var(--green-primary); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .btn-buy { flex: 1; padding: 10px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
 
         .fly-item { position: fixed; z-index: 9999; width: 50px; height: 50px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); transition: all 0.8s cubic-bezier(0.2, 1, 0.3, 1); pointer-events: none; }
 
@@ -354,8 +285,7 @@ TEMPLATE = """
         .footer-grid h3 { color: var(--accent-gold); font-family: 'Playfair Display'; font-size: 20px; margin-bottom: 15px; }
         .footer-grid p { font-size: 14px; margin-bottom: 10px; color: #ddd; display: flex; align-items: center; gap: 10px; }
         .social-icons { margin-top: 15px; display: flex; gap: 15px; }
-        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; transition: background 0.2s; }
-        .social-icons a:hover { background: var(--accent-gold); }
+        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; }
         .footer-bottom { padding-top: 20px; font-size: 12px; color: #aaa; text-align: center; }
     </style>
 </head>
@@ -365,7 +295,6 @@ TEMPLATE = """
         <div class="nav-left">
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
-                <img src="{{ logo_url }}" alt="Logo" class="logo-img">
                 <div class="logo"><span>Kesh</span> Aadar</div>
             </div>
         </div>
@@ -433,9 +362,9 @@ TEMPLATE = """
         <div class="product-grid">
             {% for p in products %}
             <div class="product-card reveal" data-id="{{ p.id }}">
-                <div class="product-media-container" id="media-{{ p.id }}">
-                    {% if p.video %}
-                    <video src="{{ p.video }}" autoplay muted loop playsinline></video>
+                <div class="product-img-container">
+                    {% if p.image.endswith('.mp4') or 'video' in p.image %}
+                    <video src="{{ p.image }}" autoplay muted loop playsinline id="img-{{ p.id }}"></video>
                     {% else %}
                     <img src="{{ p.image }}" alt="{{ p.name }}" id="img-{{ p.id }}">
                     {% endif %}
@@ -564,13 +493,11 @@ TEMPLATE = """
             cart.push(p); 
             updateCartUI();
 
-            let mediaBox = document.getElementById('media-' + id);
-            let img = mediaBox.querySelector('img') || mediaBox.querySelector('video');
-            let flyer = img.cloneNode(true);
-            if(flyer.tagName === 'VIDEO') { flyer = document.createElement('img'); flyer.src = p.image; }
+            let mediaEl = document.getElementById('img-' + id);
+            let flyer = mediaEl.cloneNode(true);
             flyer.className = 'fly-item';
             
-            let rect = mediaBox.getBoundingClientRect();
+            let rect = mediaEl.getBoundingClientRect();
             flyer.style.top = rect.top + 'px';
             flyer.style.left = rect.left + 'px';
             document.body.appendChild(flyer);
@@ -661,25 +588,20 @@ TEMPLATE = """
                         postOffices.forEach(po => {
                             landmarkSelect.innerHTML += `<option value="${po.Name}">${po.Name}</option>`;
                         });
-                    } else {
-                        alert("Invalid PIN Code entered.");
                     }
                 })
-                .catch(() => console.log("PIN code lookup unavailable"));
+                .catch(() => console.log("PIN lookup error"));
             }
         }
 
         function checkSavedAddressAvailability() {
-            let saved = localStorage.getItem('kesh_saved_address');
-            if(saved) { document.getElementById('useSavedAddrBtn').style.display = 'flex'; }
+            if(localStorage.getItem('kesh_saved_address')) {
+                document.getElementById('useSavedAddrBtn').style.display = 'flex';
+            }
         }
 
         function saveAddressToStorage(data) {
-            localStorage.setItem('kesh_saved_address', JSON.stringify({
-                name: data.name, email: data.email, phone: data.phone,
-                pincode: data.pincode, city: data.city, state: data.state,
-                landmark: data.landmark, street: data.street
-            }));
+            localStorage.setItem('kesh_saved_address', JSON.stringify(data));
         }
 
         function loadSavedAddress() {
@@ -716,7 +638,7 @@ TEMPLATE = """
             let payload = { 
                 name, email, phone, pincode, city, state, landmark, street, 
                 amount: amt, 
-                payment_type: mode === 'cod' ? 'Cash on Delivery (COD)' : 'Online Payment (Paid)', 
+                payment_type: mode === 'cod' ? 'Cash on Delivery' : 'Online Payment (Prepaid)', 
                 items: cart 
             };
 
@@ -762,7 +684,8 @@ TEMPLATE = """
             fetch('/track_order?q=' + encodeURIComponent(q)).then(r => r.json()).then(data => {
                 let d = document.getElementById('track-result');
                 if(data.found) {
-                    d.innerHTML = `<div style="background:#e8f5e9; padding:12px; border-radius:8px; font-size:13px;"><h4 style="color:#2e7d32;">Found: ${data.order.order_id}</h4><p>Current Status: <b>${data.order.status_step}</b></p><a href="/order_success/${data.order.order_id}" style="color:var(--green-primary); font-weight:600; display:inline-block; margin-top:5px;">View Detailed Tracker &rarr;</a></div>`;
+                    let st = data.order.fulfillment_status;
+                    d.innerHTML = `<div style="background:#e8f5e9; padding:12px; border-radius:8px; font-size:13px;"><h4 style="color:#2e7d32;">Found: ${data.order.order_id}</h4><p><b>Status:</b> ${st}</p></div>`;
                 } else { 
                     d.innerHTML = '<p style="color:red; font-size:12px;">No order matching details found.</p>'; 
                 }
@@ -773,18 +696,18 @@ TEMPLATE = """
 </html>
 """
 
-# --- ANIMATED DEDICATED ORDER SUCCESS & STEPPER TRACKER TEMPLATE ---
+# --- DEDICATED SUCCESS & STEP TRACKER TEMPLATE ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Tracker | KESH AADAR</title>
+    <title>Order Confirmed | KESH AADAR</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; --green-light: #2d6a4f; }
+        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background-color: var(--cream); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
@@ -792,82 +715,98 @@ SUCCESS_TEMPLATE = """
         @keyframes pulseGlow { 0% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(46, 125, 50, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); } }
 
         .card { background: white; max-width: 620px; width: 100%; padding: 40px 30px; border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); text-align: center; }
-        .icon-box { font-size: 40px; color: white; background: #2e7d32; border-radius: 50%; width: 80px; height: 80px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
+        .icon-box { font-size: 50px; color: white; background: #2e7d32; border-radius: 50%; width: 90px; height: 90px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 25px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
         
-        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 28px; margin-bottom: 5px; }
-        p.subtitle { color: #666; font-size: 13px; margin-bottom: 20px; }
+        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 32px; margin-bottom: 8px; }
+        p.subtitle { color: #666; font-size: 14px; margin-bottom: 25px; }
 
-        /* Step-by-Step Stepper (Amazon / Flipkart style) */
-        .stepper-container { display: flex; justify-content: space-between; position: relative; margin: 30px 10px; }
-        .stepper-container::before { content: ''; position: absolute; top: 20px; left: 10%; width: 80%; height: 4px; background: #e0e0e0; z-index: 1; }
-        .step { position: relative; z-index: 2; text-align: center; flex: 1; }
-        .step-circle { width: 42px; height: 42px; border-radius: 50%; background: #e0e0e0; color: #777; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; font-size: 16px; font-weight: bold; transition: 0.3s; }
-        .step.completed .step-circle { background: var(--green-primary); color: white; }
-        .step.active .step-circle { background: var(--accent-gold); color: white; box-shadow: 0 0 15px rgba(212, 163, 115, 0.6); }
-        .step-label { font-size: 11px; font-weight: 600; color: #666; }
-        .step.active .step-label { color: var(--green-primary); font-weight: 700; }
-
-        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: left; }
+        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 12px; margin-bottom: 25px; text-align: left; }
         .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #444; }
 
-        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: background 0.2s; }
-        .btn-home:hover { background: var(--green-light); }
+        /* Timeline Tracker UI */
+        .tracker-container { margin: 25px 0; padding: 20px; background: #fff; border: 1px solid #eee; border-radius: 12px; }
+        .steps { display: flex; justify-content: space-between; position: relative; margin-top: 15px; }
+        .steps::before { content: ''; position: absolute; top: 15px; left: 10%; width: 80%; height: 4px; background: #ddd; z-index: 1; }
+        .step { position: relative; z-index: 2; text-align: center; width: 25%; }
+        .step-icon { width: 34px; height: 34px; border-radius: 50%; background: #ddd; color: #fff; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; font-size: 12px; font-weight: bold; transition: background 0.3s; }
+        .step.completed .step-icon { background: #2e7d32; }
+        .step.active .step-icon { background: var(--accent-gold); box-shadow: 0 0 10px rgba(212,163,115,0.6); }
+        .step-label { font-size: 11px; color: #666; font-weight: 500; }
+
+        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; }
     </style>
 </head>
 <body>
 
     <div class="card">
         <div class="icon-box"><i class="fa-solid fa-check"></i></div>
-        <h1>Order Tracking & Details</h1>
-        <p class="subtitle">Thank you for choosing Kesh Aadar. Here is your live order status.</p>
+        <h1>Order Confirmed!</h1>
+        <p class="subtitle">Thank you for choosing Kesh Aadar. Your order summary and updates are below.</p>
 
         {% if order %}
-        <!-- Live Stepper -->
-        {% set current = order.status_step %}
-        <div class="stepper-container">
-            <div class="step {% if current in ['Order Placed', 'Packaging', 'Shipped', 'Delivered'] %}completed{% endif %} {% if current == 'Order Placed' %}active{% endif %}">
-                <div class="step-circle"><i class="fa-solid fa-file-invoice"></i></div>
-                <div class="step-label">Placed</div>
-            </div>
-            <div class="step {% if current in ['Packaging', 'Shipped', 'Delivered'] %}completed{% endif %} {% if current == 'Packaging' %}active{% endif %}">
-                <div class="step-circle"><i class="fa-solid fa-box-open"></i></div>
-                <div class="step-label">Packaging</div>
-            </div>
-            <div class="step {% if current in ['Shipped', 'Delivered'] %}completed{% endif %} {% if current == 'Shipped' %}active{% endif %}">
-                <div class="step-circle"><i class="fa-solid fa-truck-fast"></i></div>
-                <div class="step-label">Shipped</div>
-            </div>
-            <div class="step {% if current == 'Delivered' %}completed active{% endif %}">
-                <div class="step-circle"><i class="fa-solid fa-house-chimney"></i></div>
-                <div class="step-label">Delivered</div>
-            </div>
+        <div class="order-info-box">
+            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order.order_id }}</b></div>
+            <div class="info-row"><span>Customer Name:</span><b>{{ order.name }}</b></div>
+            <div class="info-row"><span>Phone:</span><b>{{ order.phone }}</b></div>
+            <div class="info-row"><span>Email:</span><b>{{ order.email }}</b></div>
+            <div class="info-row"><span>Payment Status:</span><b style="color: #2e7d32;">{{ order.payment_type }} (Paid / Confirmed)</b></div>
+            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 250px; text-align: right;">{{ order.full_address }}</span></div>
+            <hr style="border:0; border-top:1px solid #ddd; margin: 10px 0;">
+            <div class="info-row"><span>Total Bill:</span><b style="font-size:15px; color:var(--green-primary);">₹{{ order.amount }} (Incl. GST & Taxes)</b></div>
         </div>
 
-        <div class="order-info-box">
-            <div class="info-row"><span>Order Reference ID:</span><b style="font-family:monospace; font-size:15px; color:var(--green-primary);">{{ order.order_id }}</b></div>
-            <div class="info-row"><span>Customer Name:</span><b>{{ order.name }}</b></div>
-            <div class="info-row"><span>Email / Phone:</span><b>{{ order.email }} | {{ order.phone }}</b></div>
-            <div class="info-row"><span>Payment Status:</span><b style="color: #2e7d32;">{{ order.payment_type }}</b></div>
-            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 260px; text-align: right;">{{ order.full_address }}</span></div>
-            <hr style="border: 0; border-top: 1px dashed #d4a373; margin: 12px 0;">
-            <div class="info-row"><span>Items Ordered:</span><span><b>{{ order.items | length }} item(s)</b></span></div>
-            {% for item in order.items %}
-            <div class="info-row" style="padding-left: 10px; font-size: 12px; color: #666;"><span>• {{ item.name }}</span><span>₹{{ item.price }}</span></div>
-            {% endfor %}
-            <div class="info-row" style="margin-top: 10px; font-size: 15px; font-weight: bold; color: var(--green-primary);"><span>Total Bill (Incl. Taxes & Fees):</span><span>₹{{ order.amount }}</span></div>
+        <!-- Live Step Tracker -->
+        <div class="tracker-container">
+            <h4 style="font-size: 14px; color: var(--green-primary); margin-bottom: 5px;">Live Order Progress</h4>
+            <div class="steps" id="stepsWrapper" data-status="{{ order.fulfillment_status }}">
+                <div class="step" id="step-1">
+                    <div class="step-icon"><i class="fa-solid fa-clipboard-check"></i></div>
+                    <div class="step-label">Placed</div>
+                </div>
+                <div class="step" id="step-2">
+                    <div class="step-icon"><i class="fa-solid fa-box-open"></i></div>
+                    <div class="step-label">Packaging</div>
+                </div>
+                <div class="step" id="step-3">
+                    <div class="step-icon"><i class="fa-solid fa-truck-fast"></i></div>
+                    <div class="step-label">Shifting</div>
+                </div>
+                <div class="step" id="step-4">
+                    <div class="step-icon"><i class="fa-solid fa-house-chimney"></i></div>
+                    <div class="step-label">Delivered</div>
+                </div>
+            </div>
         </div>
         {% else %}
         <div class="order-info-box">
             <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order_id }}</b></div>
-            <p style="color: #c62828; font-size: 13px; margin-top: 10px;">Order details could not be retrieved in current serverless session.</p>
         </div>
         {% endif %}
 
-        <p style="font-size: 12px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> Official confirmation & invoice have been sent to your registered email.</p>
+        <p style="font-size: 12px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> Official email confirmation sent to your inbox.</p>
         
         <a href="/" class="btn-home">Continue Shopping</a>
     </div>
 
+    <script>
+        const statusMap = {
+            'Order Placed': 1,
+            'Packaging': 2,
+            'Shifting': 3,
+            'Delivered': 4
+        };
+        const currentStatus = document.getElementById('stepsWrapper')?.getAttribute('data-status') || 'Order Placed';
+        const currentLevel = statusMap[currentStatus] || 1;
+
+        for(let i=1; i<=4; i++) {
+            let el = document.getElementById('step-' + i);
+            if(i < currentLevel) {
+                el.classList.add('completed');
+            } else if(i === currentLevel) {
+                el.classList.add('completed', 'active');
+            }
+        }
+    </script>
 </body>
 </html>
 """
@@ -880,245 +819,216 @@ ADMIN_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | KESH AADAR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --green-primary: #1b4332; --cream: #FAF7F0; --cream-dark: #F3EFEA; --accent-gold: #d4a373; }
+        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
-        body { background: var(--cream); color: #333; display: flex; min-height: 100vh; }
+        body { background-color: var(--cream); color: #2b2b2b; display: flex; min-height: 100vh; }
 
         /* Admin Sidebar */
-        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 25px 20px; display: flex; flex-direction: column; justify-content: space-between; }
-        .admin-brand { font-size: 20px; font-weight: 700; margin-bottom: 30px; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
-        .admin-brand img { width: 35px; height: 35px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent-gold); }
-        .nav-links { display: flex; flex-direction: column; gap: 10px; flex: 1; }
-        .nav-links button { background: none; border: none; color: #ccc; text-align: left; padding: 12px 15px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
-        .nav-links button:hover, .nav-links button.active { background: rgba(255,255,255,0.1); color: white; }
-        .nav-links button i { color: var(--accent-gold); width: 20px; }
+        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 30px 20px; display: flex; flex-direction: column; justify-content: space-between; }
+        .admin-sidebar h2 { font-size: 20px; color: var(--accent-gold); margin-bottom: 30px; }
+        .admin-menu { display: flex; flex-direction: column; gap: 10px; flex-grow: 1; }
+        .admin-menu button { background: none; border: none; color: white; padding: 12px 15px; border-radius: 8px; text-align: left; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 12px; font-weight: 500; }
+        .admin-menu button.active, .admin-menu button:hover { background: rgba(255,255,255,0.1); }
+        .admin-menu button i { color: var(--accent-gold); width: 20px; }
 
         /* Admin Main Content */
-        .admin-main { flex: 1; padding: 30px; overflow-y: auto; max-height: 100vh; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        
-        h2 { color: var(--green-primary); font-size: 24px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-        .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); margin-bottom: 25px; }
-        
-        form label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: var(--green-primary); }
-        form input, form select, form textarea { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 13px; }
-        .btn-submit { background: var(--green-primary); color: white; padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-        .btn-submit:hover { background: #2d6a4f; }
+        .admin-content { flex-grow: 1; padding: 40px; overflow-y: auto; max-height: 100vh; }
+        .section-box { display: none; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); }
+        .section-box.active { display: block; }
 
-        /* Tables */
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: var(--cream-dark); color: var(--green-primary); font-weight: 600; }
+        h3 { color: var(--green-primary); margin-bottom: 20px; font-size: 22px; }
         
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; color: var(--green-primary); font-weight: 600; }
+
         .badge { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-        .badge.active { background: #e8f5e9; color: #2e7d32; }
-        .badge.suspended { background: #ffebee; color: #c62828; }
+        .badge.placed { background: #e3f2fd; color: #1565c0; }
+        .badge.packaging { background: #fff3e0; color: #ef6c00; }
+        .badge.shifting { background: #ede7f6; color: #512da8; }
+        .badge.delivered { background: #e8f5e9; color: #2e7d32; }
+
+        .form-control { width: 100%; padding: 10px 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 13px; }
+        .btn-submit { background: var(--green-primary); color: white; border: none; padding: 12px 25px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     </style>
 </head>
 <body>
 
     <div class="admin-sidebar">
         <div>
-            <div class="admin-brand"><img src="{{ logo_url }}" alt="Logo"> Kesh Aadar Admin</div>
-            <div class="nav-links">
-                <button class="active" onclick="switchTab('orders', this)"><i class="fa-solid fa-clipboard-list"></i> Customer Orders</button>
-                <button onclick="switchTab('products', this)"><i class="fa-solid fa-boxes-stacked"></i> Inventory & Products</button>
-                <button onclick="switchTab('add-product', this)"><i class="fa-solid fa-square-plus"></i> Add New Product</button>
-                <button onclick="switchTab('logo', this)"><i class="fa-solid fa-image"></i> Website Logo</button>
+            <h2>KESH AADAR Admin</h2>
+            <div class="admin-menu">
+                <button class="active" onclick="switchTab('orders', event)"><i class="fa-solid fa-box"></i> Orders Management</button>
+                <button onclick="switchTab('inventory', event)"><i class="fa-solid fa-store"></i> Products & Inventory</button>
             </div>
         </div>
         <div>
-            <a href="/" target="_blank" style="color: var(--accent-gold); text-decoration: none; font-size: 13px; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Visit Storefront</a>
+            <a href="/" style="color: #aaa; text-decoration: none; font-size: 13px;"><i class="fa-solid fa-arrow-left"></i> Back to Store</a>
         </div>
     </div>
 
-    <div class="admin-main">
-        <!-- ORDERS TAB -->
-        <div id="tab-orders" class="tab-content active">
-            <h2>Customer Orders <span style="font-size:14px; color:#666;">({{ orders | length }} Total)</span></h2>
-            <div class="card">
-                {% if orders %}
-                <div style="overflow-x:auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Order ID & Date</th>
-                                <th>Customer Info</th>
-                                <th>Delivery Address</th>
-                                <th>Items & Total</th>
-                                <th>Status Control</th>
-                            </tr>
-                        </thead>
-                        <tbody>
+    <div class="admin-content">
+        <!-- Orders Section -->
+        <div id="section-orders" class="section-box active">
+            <h3>Customer Orders</h3>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Order ID & Date</th>
+                            <th>Customer Info</th>
+                            <th>Address & Items</th>
+                            <th>Total Amount</th>
+                            <th>Update Fulfillment Stage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if orders %}
                             {% for o in orders %}
                             <tr>
+                                <td><b>{{ o.order_id }}</b><br><span style="font-size:11px; color:#777;">{{ o.date }}</span></td>
+                                <td><b>{{ o.name }}</b><br>{{ o.phone }}<br>{{ o.email }}</td>
                                 <td>
-                                    <b style="color:var(--green-primary); font-family:monospace;">{{ o.order_id }}</b><br>
-                                    <span style="font-size:11px; color:#777;">{{ o.date }}</span>
+                                    {{ o.full_address }}<br>
+                                    <span style="font-size:11px; color:#555;"><b>Items:</b> {% for i in o.items %}{{ i.name }} (₹{{ i.price }}), {% endfor %}</span>
                                 </td>
+                                <td><b>₹{{ o.amount }}</b><br><span style="font-size:11px; color:#2e7d32;">{{ o.payment_type }}</span></td>
                                 <td>
-                                    <b>{{ o.name }}</b><br>
-                                    <i class="fa-solid fa-phone" style="font-size:10px;"></i> {{ o.phone }}<br>
-                                    <i class="fa-solid fa-envelope" style="font-size:10px;"></i> {{ o.email }}
-                                </td>
-                                <td style="font-size:12px; max-width: 220px;">
-                                    {{ o.full_address }}
-                                </td>
-                                <td>
-                                    <b>₹{{ o.amount }}</b> <span style="font-size:11px; color:#2e7d32;">({{ o.payment_type }})</span><br>
-                                    <span style="font-size:11px; color:#555;">{{ o.items | length }} items</span>
-                                </td>
-                                <td>
-                                    <select onchange="updateOrderStatus('{{ o.order_id }}', this.value)" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid #ccc; font-weight:600;">
-                                        <option value="Order Placed" {% if o.status_step == 'Order Placed' %}selected{% endif %}>1. Order Placed</option>
-                                        <option value="Packaging" {% if o.status_step == 'Packaging' %}selected{% endif %}>2. Packaging</option>
-                                        <option value="Shipped" {% if o.status_step == 'Shipped' %}selected{% endif %}>3. Shipped</option>
-                                        <option value="Delivered" {% if o.status_step == 'Delivered' %}selected{% endif %}>4. Delivered</option>
+                                    <select class="form-control" style="margin-bottom:0;" onchange="updateOrderStatus('{{ o.order_id }}', this.value)">
+                                        <option value="Order Placed" {% if o.fulfillment_status == 'Order Placed' %}selected{% endif %}>Order Placed</option>
+                                        <option value="Packaging" {% if o.fulfillment_status == 'Packaging' %}selected{% endif %}>Packaging</option>
+                                        <option value="Shifting" {% if o.fulfillment_status == 'Shifting' %}selected{% endif %}>Shifting</option>
+                                        <option value="Delivered" {% if o.fulfillment_status == 'Delivered' %}selected{% endif %}>Delivered</option>
                                     </select>
                                 </td>
                             </tr>
                             {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <p style="text-align:center; color:#777; padding:30px;">No customer orders received yet.</p>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- PRODUCTS INVENTORY TAB -->
-        <div id="tab-products" class="tab-content">
-            <h2>Inventory Management</h2>
-            <div class="card">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Product</th>
-                            <th>Category</th>
-                            <th>Price (₹)</th>
-                            <th>Stock</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for p in products %}
-                        <tr>
-                            <td>
-                                <div style="display:flex; align-items:center; gap:10px;">
-                                    <img src="{{ p.image }}" style="width:36px; height:36px; object-fit:cover; border-radius:6px;">
-                                    <b>{{ p.name }}</b>
-                                </div>
-                            </td>
-                            <td>{{ p.category }}</td>
-                            <td>
-                                <form action="/api/admin/products/{{ p.id }}/update" method="POST" style="display:inline-flex; gap:5px; align-items:center; margin:0;">
-                                    <input type="number" name="price" value="{{ p.price }}" style="width:75px; margin:0; padding:4px;">
-                            </td>
-                            <td>
-                                    <input type="number" name="stock" value="{{ p.stock }}" style="width:60px; margin:0; padding:4px;">
-                            </td>
-                            <td>
-                                    <select name="status" style="width:90px; margin:0; padding:4px; font-size:11px;">
-                                        <option value="active" {% if p.status == 'active' %}selected{% endif %}>Active</option>
-                                        <option value="suspended" {% if p.status == 'suspended' %}selected{% endif %}>Suspended</option>
-                                    </select>
-                            </td>
-                            <td>
-                                    <button type="submit" class="btn-submit" style="padding:4px 8px; font-size:11px;">Save</button>
-                                </form>
-                                <form action="/api/admin/products/{{ p.id }}/delete" method="POST" style="display:inline; margin-left:5px;" onsubmit="return confirm('Delete this product?');">
-                                    <button type="submit" style="background:#c62828; color:white; border:none; padding:5px 8px; border-radius:6px; cursor:pointer;"><i class="fa-solid fa-trash"></i></button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
+                        {% else %}
+                            <tr><td colspan="5" style="text-align:center; color:#888; padding:30px;">No customer orders received yet.</td></tr>
+                        {% endif %}
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <!-- ADD PRODUCT TAB -->
-        <div id="tab-add-product" class="tab-content">
-            <h2>Upload New Product</h2>
-            <div class="card" style="max-width: 600px;">
-                <form action="/api/admin/products" method="POST" enctype="multipart/form-data">
-                    <label>Product Name *</label>
-                    <input type="text" name="name" required placeholder="e.g. Organic Rose Water Toner">
+        <!-- Inventory Section -->
+        <div id="section-inventory" class="section-box">
+            <h3>Product Inventory & Upload Manager</h3>
+            
+            <div style="background:#f9f9f9; padding:20px; border-radius:12px; margin-bottom:30px; border:1px solid #eee;">
+                <h4 style="color:var(--green-primary); margin-bottom:15px; font-size:16px;">Add / Update Product</h4>
+                <form action="/admin/save_product" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="id" id="prod-id">
+                    <div class="grid-2">
+                        <input type="text" name="name" id="prod-name" class="form-control" placeholder="Product Name *" required>
+                        <input type="text" name="category" id="prod-category" class="form-control" placeholder="Category (e.g. Haircare, Skincare) *" required>
+                        <input type="number" name="price" id="prod-price" class="form-control" placeholder="Price (₹) *" required>
+                        <input type="number" name="stock" id="prod-stock" class="form-control" placeholder="Stock Count *" required>
+                    </div>
+                    <textarea name="desc" id="prod-desc" class="form-control" placeholder="Product Description *" rows="2" required></textarea>
                     
-                    <label>Category *</label>
-                    <select name="category" required>
-                        <option value="Skincare">Skincare</option>
-                        <option value="Haircare">Haircare</option>
-                        <option value="Wellness">Wellness</option>
-                    </select>
-
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                    <div class="grid-2" style="align-items: center;">
                         <div>
-                            <label>Price (₹) *</label>
-                            <input type="number" name="price" required placeholder="399">
+                            <label style="font-size: 12px; color: #555; display: block; margin-bottom: 5px;">Upload Media (Image or Video from Gallery):</label>
+                            <input type="file" name="image_file" class="form-control" accept="image/*,video/*">
+                            <input type="hidden" name="existing_image" id="prod-existing-img">
                         </div>
                         <div>
-                            <label>Initial Stock *</label>
-                            <input type="number" name="stock" required placeholder="50">
+                            <label style="font-size: 12px; color: #555; display: block; margin-bottom: 5px;">Storefront Status:</label>
+                            <select name="status" id="prod-status" class="form-control">
+                                <option value="Live">Live (Visible on Store)</option>
+                                <option value="Suspended">Suspended (Hidden from Store)</option>
+                            </select>
                         </div>
                     </div>
-
-                    <label>Product Image File (Gallery Upload) *</label>
-                    <input type="file" name="image_file" accept="image/*" required>
-
-                    <label>Product Video File (Optional Gallery Upload)</label>
-                    <input type="file" name="video_file" accept="video/*">
-
-                    <label>Description</label>
-                    <textarea name="desc" rows="3" placeholder="Brief botanical description..."></textarea>
-
-                    <button type="submit" class="btn-submit" style="width:100%;">Publish Product</button>
+                    <button type="submit" class="btn-submit">Save Product</button>
+                    <button type="button" onclick="resetForm()" style="background:#6c757d; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; margin-left:10px;">Clear Form</button>
                 </form>
             </div>
-        </div>
 
-        <!-- WEBSITE LOGO TAB -->
-        <div id="tab-logo" class="tab-content">
-            <h2>Manage Website Logo</h2>
-            <div class="card" style="max-width: 500px; text-align: center;">
-                <div style="margin-bottom: 20px;">
-                    <img src="{{ logo_url }}" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid var(--accent-gold);">
-                </div>
-                <form action="/api/admin/logo" method="POST" enctype="multipart/form-data" style="text-align: left;">
-                    <label>Upload New Logo Image (Gallery)</label>
-                    <input type="file" name="logo_file" accept="image/*" required>
-                    <button type="submit" class="btn-submit" style="width: 100%; margin-top: 10px;">Update Website Logo</button>
-                </form>
-            </div>
+            <h4>Existing Inventory List</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Media</th>
+                        <th>Name & Category</th>
+                        <th>Price & Stock</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in products %}
+                    <tr>
+                        <td>
+                            {% if p.image.endswith('.mp4') or 'video' in p.image %}
+                            <video src="{{ p.image }}" width="45" height="45" style="border-radius:6px; object-fit:cover;" muted></video>
+                            {% else %}
+                            <img src="{{ p.image }}" width="45" height="45" style="border-radius:6px; object-fit:cover;">
+                            {% endif %}
+                        </td>
+                        <td><b>{{ p.name }}</b><br><span style="font-size:11px; color:#777;">{{ p.category }}</span></td>
+                        <td>₹{{ p.price }}<br><span style="font-size:11px; color:#2e7d32;">Stock: {{ p.stock }}</span></td>
+                        <td><span class="badge {% if p.status == 'Live' %}delivered{% else %}placed{% endif %}">{{ p.status or 'Live' }}</span></td>
+                        <td>
+                            <button type="button" onclick="editProduct({{ p.id }}, '{{ p.name }}', '{{ p.category }}', {{ p.price }}, {{ p.stock }}, '{{ p.desc }}', '{{ p.image }}', '{{ p.status or 'Live' }}')" style="background:#ffc107; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:11px;">Edit</button>
+                            <form action="/admin/delete_product/{{ p.id }}" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this product?');">
+                                <button type="submit" style="background:#dc3545; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:11px; margin-left:5px;">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 
     <script>
-        function switchTab(tabId, btn) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.nav-links button').forEach(el => el.classList.remove('active'));
-            document.getElementById('tab-' + tabId).classList.add('active');
-            btn.classList.add('active');
+        function switchTab(tab, evt) {
+            document.querySelectorAll('.section-box').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.admin-menu button').forEach(el => el.classList.remove('active'));
+            document.getElementById('section-' + tab).classList.add('active');
+            evt.currentTarget.classList.add('active');
         }
 
-        function updateOrderStatus(orderId, newStatus) {
-            fetch('/api/admin/orders/' + orderId + '/status', {
+        function updateOrderStatus(orderId, status) {
+            fetch('/admin/update_status', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.status === 'success') {
-                    alert('Order status successfully updated to: ' + newStatus);
+                body: JSON.stringify({ order_id: orderId, status: status })
+            }).then(r => r.json()).then(res => {
+                if(res.success) {
+                    console.log("Status updated successfully");
                 }
             });
+        }
+
+        function editProduct(id, name, category, price, stock, desc, image, status) {
+            document.getElementById('prod-id').value = id;
+            document.getElementById('prod-name').value = name;
+            document.getElementById('prod-category').value = category;
+            document.getElementById('prod-price').value = price;
+            document.getElementById('prod-stock').value = stock;
+            document.getElementById('prod-desc').value = desc;
+            document.getElementById('prod-existing-img').value = image;
+            document.getElementById('prod-status').value = status;
+            window.scrollTo({top: 0, behavior: 'smooth'});
+        }
+
+        function resetForm() {
+            document.getElementById('prod-id').value = '';
+            document.getElementById('prod-name').value = '';
+            document.getElementById('prod-category').value = '';
+            document.getElementById('prod-price').value = '';
+            document.getElementById('prod-stock').value = '';
+            document.getElementById('prod-desc').value = '';
+            document.getElementById('prod-existing-img').value = '';
+            document.getElementById('prod-status').value = 'Live';
         }
     </script>
 </body>
@@ -1126,5 +1036,4 @@ ADMIN_TEMPLATE = """
 """
 
 if __name__ == '__main__':
-    print("Kesh Aadar Flask Server Running...")
     app.run(host='0.0.0.0', port=5000, debug=True)
