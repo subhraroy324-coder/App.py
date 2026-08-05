@@ -7,7 +7,6 @@ from email.mime.text import MIMEText
 import datetime
 import random
 import base64
-from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = 'kesh_aadar_secure_key_2026'
@@ -18,11 +17,8 @@ SMTP_PORT = 587
 SMTP_EMAIL = "subhraroy324@gmail.com"
 SMTP_PASS = "azku hebm gpsr pggo"
 
-# --- DATABASE & STORAGE (In-memory serverless compatible) ---
-LOGO_STATE = {
-    "url": "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80",
-    "name": "Kesh Aadar"
-}
+# --- IN-MEMORY STORAGE (Serverless state) ---
+LOGO_DATA = "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80"
 
 PRODUCTS = [
     {
@@ -75,46 +71,45 @@ ORDERS = []
 BLACKLISTED_IPS = []
 
 # --- BACKGROUND EMAIL SENDER ---
-def send_order_email(recipient_email, name, order_id, amount, items, full_address, payment_type):
+def send_order_email(recipient_email, name, order_id, amount, items, full_address):
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f"Order Confirmed: {order_id} - KESH AADAR"
         msg['From'] = f"KESH AADAR <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
-        items_html = "".join([f"<li><b>{i['name']}</b> (Qty: 1) - ₹{i['price']}</li>" for i in items])
+        items_html = "".join([f"<li><b>{i['name']}</b> - ₹{i['price']}</li>" for i in items])
         track_url = f"https://{request.host}/order_success/{order_id}" if request.host else f"http://127.0.0.1:5000/order_success/{order_id}"
 
         html_content = f"""
         <html>
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
-            <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); text-align: left;">
-                <h1 style="font-size: 32px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">KESH AADAR</h1>
-                <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">Pure Botanical Remedies</p>
+            <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
+                <h1 style="font-size: 36px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">KESH AADAR</h1>
+                <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 12px; font-weight: bold; margin-top: 0; text-align: center;">Pure Botanical Remedies</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
-                <h2 style="color: #1b4332; font-size: 20px;">Thank you for your order, {name}!</h2>
-                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your order has been placed successfully and is being prepared with care.</p>
+                <h2 style="color: #1b4332; font-size: 22px;">Thank you for your order, {name}!</h2>
+                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your order has been placed successfully. We are currently preparing your botanical items for dispatch.</p>
                 
-                <div style="background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%); color: white; padding: 25px; border-radius: 14px; margin: 25px 0; text-align: center;">
-                    <p style="margin: 0; color: #d4a373; font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Order Reference ID</p>
-                    <h3 style="margin: 10px 0; font-size: 30px; font-family: monospace; letter-spacing: 2px;">{order_id}</h3>
-                    <p style="margin: 5px 0; font-size: 15px; font-weight: 500;">Total Amount: ₹{amount} ({payment_type})</p>
+                <div style="background: #F3EFEA; padding: 20px; border-radius: 12px; margin: 25px 0; border: 1px dashed #d4a373;">
+                    <p style="margin: 0; color: #666; font-size: 12px; text-transform: uppercase; font-weight: bold;">Order Reference ID</p>
+                    <h3 style="margin: 8px 0; font-size: 28px; color: #1b4332; font-family: monospace;">{order_id}</h3>
+                    <p style="margin: 5px 0; color: #333; font-size: 14px; font-weight: 600;">Total Payable: ₹{amount}</p>
+                    <p style="margin: 5px 0 0 0; color: #666; font-size: 13px;"><b>Shipping To:</b> {full_address}</p>
                 </div>
 
-                <h4 style="color: #1b4332; margin-bottom: 10px; font-size: 15px;">Items Ordered:</h4>
-                <ul style="font-size: 14px; color: #444; padding-left: 20px; line-height: 1.8; margin-bottom: 25px;">
+                <h4 style="color: #1b4332; margin-bottom: 10px;">Items Ordered:</h4>
+                <ul style="font-size: 14px; color: #444; padding-left: 20px; line-height: 1.8;">
                     {items_html}
                 </ul>
 
-                <p style="font-size: 13px; color: #555; margin-bottom: 8px;"><b>Shipping Address:</b> {full_address}</p>
-
-                <div style="text-align: center; margin-top: 35px;">
-                    <a href="{track_url}" style="background: #d4a373; color: #1b4332; text-decoration: none; padding: 14px 35px; border-radius: 30px; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 5px 15px rgba(212, 163, 115, 0.4);">Click Here to Track Your Order Status</a>
+                <div style="text-align: center; margin-top: 30px;">
+                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: bold; font-size: 15px; display: inline-block; box-shadow: 0 5px 15px rgba(27, 67, 50, 0.3);">Check Live Order Status</a>
                 </div>
 
                 <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0 15px 0;">
-                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Contact support at {SMTP_EMAIL}</p>
+                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Reply directly to this email or contact customer support at subhraroy324@gmail.com</p>
             </div>
         </body>
         </html>
@@ -147,7 +142,7 @@ def check_ip_blacklist():
 @app.route('/')
 def index():
     active_products = [p for p in PRODUCTS if p.get('status', 'active') == 'active']
-    return render_template_string(TEMPLATE, products=active_products, logo=LOGO_STATE)
+    return render_template_string(TEMPLATE, products=active_products, logo_url=LOGO_DATA)
 
 @app.route('/place_order', methods=['POST'])
 def place_order():
@@ -158,14 +153,14 @@ def place_order():
     data['client_ip'] = request.remote_addr
     data['status_step'] = 'Order Placed' # Order Placed -> Packaging -> Shipped -> Delivered
     
-    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', 'N/A')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
+    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', '')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
     data['full_address'] = full_address
     
-    ORDERS.append(data)
+    ORDERS.insert(0, data)
     
     email_thread = threading.Thread(
         target=send_order_email, 
-        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address, data.get('payment_type', 'Online Payment'))
+        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address)
     )
     email_thread.start()
     
@@ -174,7 +169,7 @@ def place_order():
 @app.route('/order_success/<order_id>')
 def order_success_page(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
-    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, logo=LOGO_STATE)
+    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, logo_url=LOGO_DATA)
 
 @app.route('/track_order')
 def track_order():
@@ -184,114 +179,87 @@ def track_order():
             return jsonify({"found": True, "order": o})
     return jsonify({"found": False})
 
-
-# --- ADMIN PANEL ROUTES ---
+# --- ADMIN PANEL ROUTE ---
 @app.route('/admin')
 def admin_panel():
-    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, logo=LOGO_STATE, blacklisted=BLACKLISTED_IPS)
+    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, logo_url=LOGO_DATA)
 
-@app.route('/admin/api/update_status', methods=['POST'])
-def admin_update_status():
-    data = request.get_json()
-    order_id = data.get('order_id')
-    new_status = data.get('status_step')
-    for o in ORDERS:
-        if o['order_id'] == order_id:
-            o['status_step'] = new_status
-            return jsonify({"status": "success"})
-    return jsonify({"error": "Order not found"}), 404
-
-@app.route('/admin/api/delete_order', methods=['POST'])
-def admin_delete_order():
-    global ORDERS
-    data = request.get_json()
-    order_id = data.get('order_id')
-    ORDERS = [o for o in ORDERS if o['order_id'] != order_id]
-    return jsonify({"status": "success"})
-
-@app.route('/admin/api/logo', methods=['POST'])
+@app.route('/api/admin/logo', methods=['POST'])
 def admin_update_logo():
-    global LOGO_STATE
+    global LOGO_DATA
     if 'logo_file' in request.files:
         file = request.files['logo_file']
-        if file and file.filename != '':
+        if file.filename != '':
             encoded = base64.b64encode(file.read()).decode('utf-8')
-            mime = file.mimetype or 'image/png'
-            LOGO_STATE['url'] = f"data:{mime};base64,{encoded}"
-    return jsonify({"status": "success", "logo": LOGO_STATE})
+            mime = file.mimetype or 'image/jpeg'
+            LOGO_DATA = f"data:{mime};base64,{encoded}"
+    return redirect(url_for('admin_panel'))
 
-@app.route('/admin/api/product/add', methods=['POST'])
+@app.route('/api/admin/products', methods=['POST'])
 def admin_add_product():
     global PRODUCTS
     name = request.form.get('name')
-    category = request.form.get('category', 'Skincare')
+    category = request.form.get('category')
     price = float(request.form.get('price', 0))
-    stock = int(request.form.get('stock', 10))
+    stock = int(request.form.get('stock', 0))
     desc = request.form.get('desc', '')
     
-    image_url = request.form.get('image_url', 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80')
+    image_url = "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80"
     if 'image_file' in request.files:
         img_file = request.files['image_file']
-        if img_file and img_file.filename != '':
-            encoded = base64.b64encode(img_file.read()).decode('utf-8')
-            image_url = f"data:{img_file.mimetype or 'image/jpeg'};base64,{encoded}"
+        if img_file.filename != '':
+            enc = base64.b64encode(img_file.read()).decode('utf-8')
+            image_url = f"data:{img_file.mimetype or 'image/jpeg'};base64,{enc}"
 
     video_url = ""
     if 'video_file' in request.files:
         vid_file = request.files['video_file']
-        if vid_file and vid_file.filename != '':
-            encoded = base64.b64encode(vid_file.read()).decode('utf-8')
-            video_url = f"data:{vid_file.mimetype or 'video/mp4'};base64,{encoded}"
+        if vid_file.filename != '':
+            enc_v = base64.b64encode(vid_file.read()).decode('utf-8')
+            video_url = f"data:{vid_file.mimetype or 'video/mp4'};base64,{enc_v}"
 
     new_id = max([p['id'] for p in PRODUCTS], default=0) + 1
-    new_prod = {
+    PRODUCTS.append({
         "id": new_id,
         "name": name,
         "category": category,
         "price": price,
         "stock": stock,
+        "desc": desc,
         "image": image_url,
         "video": video_url,
-        "desc": desc,
         "status": "active"
-    }
-    PRODUCTS.append(new_prod)
+    })
     return redirect(url_for('admin_panel'))
 
-@app.route('/admin/api/product/edit', methods=['POST'])
-def admin_edit_product():
-    data = request.get_json()
-    prod_id = int(data.get('id'))
-    for p in PRODUCTS:
-        if p['id'] == prod_id:
-            p['name'] = data.get('name', p['name'])
-            p['price'] = float(data.get('price', p['price']))
-            p['stock'] = int(data.get('stock', p['stock']))
-            p['desc'] = data.get('desc', p['desc'])
-            p['status'] = data.get('status', p.get('status', 'active'))
-            return jsonify({"status": "success"})
-    return jsonify({"error": "Product not found"}), 404
-
-@app.route('/admin/api/product/toggle_status', methods=['POST'])
-def admin_toggle_product_status():
-    data = request.get_json()
-    prod_id = int(data.get('id'))
-    for p in PRODUCTS:
-        if p['id'] == prod_id:
-            p['status'] = 'suspended' if p.get('status', 'active') == 'active' else 'active'
-            return jsonify({"status": "success", "new_status": p['status']})
-    return jsonify({"error": "Product not found"}), 404
-
-@app.route('/admin/api/product/delete', methods=['POST'])
-def admin_delete_product():
+@app.route('/api/admin/products/<int:prod_id>/update', methods=['POST'])
+def admin_update_product(prod_id):
     global PRODUCTS
-    data = request.get_json()
-    prod_id = int(data.get('id'))
+    for p in PRODUCTS:
+        if p['id'] == prod_id:
+            p['price'] = float(request.form.get('price', p['price']))
+            p['stock'] = int(request.form.get('stock', p['stock']))
+            p['status'] = request.form.get('status', p['status'])
+    return redirect(url_for('admin_panel'))
+
+@app.route('/api/admin/products/<int:prod_id>/delete', methods=['POST'])
+def admin_delete_product(prod_id):
+    global PRODUCTS
     PRODUCTS = [p for p in PRODUCTS if p['id'] != prod_id]
-    return jsonify({"status": "success"})
+    return redirect(url_for('admin_panel'))
+
+@app.route('/api/admin/orders/<order_id>/status', methods=['POST'])
+def admin_update_order_status(order_id):
+    data = request.get_json()
+    new_status = data.get('status')
+    for o in ORDERS:
+        if o['order_id'] == order_id:
+            o['status_step'] = new_status
+            return jsonify({"status": "success"})
+    return jsonify({"status": "not_found"}), 404
 
 
-# --- TEMPLATES ---
+# --- FRONTEND TEMPLATE ---
 TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -312,32 +280,31 @@ TEMPLATE = """
 
         header { position: fixed; top: 0; left: 0; width: 100%; background: rgba(250, 247, 240, 0.95); backdrop-filter: blur(12px); display: flex; justify-content: space-between; align-items: center; padding: 15px 30px; z-index: 1000; box-shadow: 0 4px 25px rgba(0,0,0,0.05); }
         .nav-left { display: flex; align-items: center; gap: 15px; }
-        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.3s ease; }
+        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.2s; }
         .menu-btn:hover { transform: scale(1.1); }
         .brand-container { display: flex; align-items: center; gap: 12px; cursor: pointer; }
         .logo-img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); }
         .logo { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: var(--green-primary); letter-spacing: 1px; text-transform: uppercase; }
         .logo span { color: var(--accent-gold); }
-        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: 0.3s; }
-        .cart-icon-container:hover { background: var(--accent-gold); color: white; }
+        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: background 0.3s; }
+        .cart-icon-container:hover { background: #e5dfd5; }
         .cart-badge { position: absolute; top: -5px; right: -5px; background: var(--green-light); color: white; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 50%; }
 
-        /* Butter-smooth Sidebar Drawer */
-        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.4s; }
+        /* Smooth Drawer */
+        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
         .sidebar-overlay.active { opacity: 1; visibility: visible; }
         
-        .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
+        .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
         .sidebar.active { transform: translateX(380px); }
         .sidebar h3 { color: var(--green-primary); margin-bottom: 15px; font-size: 18px; }
         .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
         .sidebar button.menu-item:hover { background: var(--cream-dark); }
         .sidebar button.menu-item i { color: var(--accent-gold); width: 20px; }
         .sidebar button.btn-back { background: #555; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
-        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); transition: transform 0.3s; }
-        .close-sidebar:hover { transform: rotate(90deg); color: #c62828; }
+        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); }
         .sidebar input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; outline: none; }
         .sidebar button.action-btn { width: 100%; padding: 12px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: 0.2s; }
+        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: transform 0.2s; }
         .support-card:hover { transform: translateX(3px); }
 
         /* Hero */
@@ -361,7 +328,7 @@ TEMPLATE = """
         .price { font-size: 22px; font-weight: 700; color: var(--green-light); }
         .btn-group { display: flex; gap: 10px; }
         .btn-cart { flex: 1; padding: 10px; background: var(--cream-dark); color: var(--green-primary); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
-        .btn-cart:hover { background: #e5dfd3; }
+        .btn-cart:hover { background: #e5dfd5; }
         .btn-buy { flex: 1; padding: 10px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
         .btn-buy:hover { background: var(--green-light); }
 
@@ -387,7 +354,7 @@ TEMPLATE = """
         .footer-grid h3 { color: var(--accent-gold); font-family: 'Playfair Display'; font-size: 20px; margin-bottom: 15px; }
         .footer-grid p { font-size: 14px; margin-bottom: 10px; color: #ddd; display: flex; align-items: center; gap: 10px; }
         .social-icons { margin-top: 15px; display: flex; gap: 15px; }
-        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; transition: 0.3s; }
+        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; transition: background 0.2s; }
         .social-icons a:hover { background: var(--accent-gold); }
         .footer-bottom { padding-top: 20px; font-size: 12px; color: #aaa; text-align: center; }
     </style>
@@ -398,7 +365,7 @@ TEMPLATE = """
         <div class="nav-left">
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
-                <img src="{{ logo.url }}" alt="Logo" class="logo-img" id="headerLogoImg">
+                <img src="{{ logo_url }}" alt="Logo" class="logo-img">
                 <div class="logo"><span>Kesh</span> Aadar</div>
             </div>
         </div>
@@ -597,12 +564,13 @@ TEMPLATE = """
             cart.push(p); 
             updateCartUI();
 
-            let mediaContainer = document.getElementById('media-' + id);
-            let flyer = document.createElement('img');
-            flyer.src = p.image || 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80';
+            let mediaBox = document.getElementById('media-' + id);
+            let img = mediaBox.querySelector('img') || mediaBox.querySelector('video');
+            let flyer = img.cloneNode(true);
+            if(flyer.tagName === 'VIDEO') { flyer = document.createElement('img'); flyer.src = p.image; }
             flyer.className = 'fly-item';
             
-            let rect = mediaContainer.getBoundingClientRect();
+            let rect = mediaBox.getBoundingClientRect();
             flyer.style.top = rect.top + 'px';
             flyer.style.left = rect.left + 'px';
             document.body.appendChild(flyer);
@@ -703,21 +671,14 @@ TEMPLATE = """
 
         function checkSavedAddressAvailability() {
             let saved = localStorage.getItem('kesh_saved_address');
-            if(saved) {
-                document.getElementById('useSavedAddrBtn').style.display = 'flex';
-            }
+            if(saved) { document.getElementById('useSavedAddrBtn').style.display = 'flex'; }
         }
 
         function saveAddressToStorage(data) {
             localStorage.setItem('kesh_saved_address', JSON.stringify({
-                name: data.name,
-                email: data.email,
-                phone: data.phone,
-                pincode: data.pincode,
-                city: data.city,
-                state: data.state,
-                landmark: data.landmark,
-                street: data.street
+                name: data.name, email: data.email, phone: data.phone,
+                pincode: data.pincode, city: data.city, state: data.state,
+                landmark: data.landmark, street: data.street
             }));
         }
 
@@ -752,8 +713,12 @@ TEMPLATE = """
             }
 
             let amt = updateTotal();
-            let paymentTypeStr = mode === 'cod' ? 'Cash on Delivery' : 'Online Payment (Paid)';
-            let payload = { name, email, phone, pincode, city, state, landmark, street, amount: amt, payment_type: paymentTypeStr, items: cart };
+            let payload = { 
+                name, email, phone, pincode, city, state, landmark, street, 
+                amount: amt, 
+                payment_type: mode === 'cod' ? 'Cash on Delivery (COD)' : 'Online Payment (Paid)', 
+                items: cart 
+            };
 
             saveAddressToStorage(payload);
 
@@ -797,7 +762,7 @@ TEMPLATE = """
             fetch('/track_order?q=' + encodeURIComponent(q)).then(r => r.json()).then(data => {
                 let d = document.getElementById('track-result');
                 if(data.found) {
-                    window.location.href = '/order_success/' + data.order.order_id;
+                    d.innerHTML = `<div style="background:#e8f5e9; padding:12px; border-radius:8px; font-size:13px;"><h4 style="color:#2e7d32;">Found: ${data.order.order_id}</h4><p>Current Status: <b>${data.order.status_step}</b></p><a href="/order_success/${data.order.order_id}" style="color:var(--green-primary); font-weight:600; display:inline-block; margin-top:5px;">View Detailed Tracker &rarr;</a></div>`;
                 } else { 
                     d.innerHTML = '<p style="color:red; font-size:12px;">No order matching details found.</p>'; 
                 }
@@ -808,14 +773,14 @@ TEMPLATE = """
 </html>
 """
 
-# --- ANIMATED ORDER SUCCESS / TRACKING TEMPLATE ---
+# --- ANIMATED DEDICATED ORDER SUCCESS & STEPPER TRACKER TEMPLATE ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Status & Tracking | KESH AADAR</title>
+    <title>Order Tracker | KESH AADAR</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -827,27 +792,25 @@ SUCCESS_TEMPLATE = """
         @keyframes pulseGlow { 0% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(46, 125, 50, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); } }
 
         .card { background: white; max-width: 620px; width: 100%; padding: 40px 30px; border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); text-align: center; }
-        .icon-box { font-size: 45px; color: white; background: #2e7d32; border-radius: 50%; width: 85px; height: 85px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
+        .icon-box { font-size: 40px; color: white; background: #2e7d32; border-radius: 50%; width: 80px; height: 80px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
         
-        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 28px; margin-bottom: 6px; }
-        p.subtitle { color: #666; font-size: 13px; margin-bottom: 25px; }
+        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 28px; margin-bottom: 5px; }
+        p.subtitle { color: #666; font-size: 13px; margin-bottom: 20px; }
 
-        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 14px; margin-bottom: 25px; text-align: left; }
+        /* Step-by-Step Stepper (Amazon / Flipkart style) */
+        .stepper-container { display: flex; justify-content: space-between; position: relative; margin: 30px 10px; }
+        .stepper-container::before { content: ''; position: absolute; top: 20px; left: 10%; width: 80%; height: 4px; background: #e0e0e0; z-index: 1; }
+        .step { position: relative; z-index: 2; text-align: center; flex: 1; }
+        .step-circle { width: 42px; height: 42px; border-radius: 50%; background: #e0e0e0; color: #777; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; font-size: 16px; font-weight: bold; transition: 0.3s; }
+        .step.completed .step-circle { background: var(--green-primary); color: white; }
+        .step.active .step-circle { background: var(--accent-gold); color: white; box-shadow: 0 0 15px rgba(212, 163, 115, 0.6); }
+        .step-label { font-size: 11px; font-weight: 600; color: #666; }
+        .step.active .step-label { color: var(--green-primary); font-weight: 700; }
+
+        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: left; }
         .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #444; }
 
-        /* Flipkart / Amazon Style Progress Line */
-        .tracker-container { margin: 30px 0 20px 0; padding: 10px 0; }
-        .tracker-steps { display: flex; justify-content: space-between; position: relative; max-width: 450px; margin: 0 auto; }
-        .tracker-steps::before { content: ''; position: absolute; top: 18px; left: 30px; right: 30px; height: 4px; background: #e0e0e0; z-index: 1; }
-        
-        .step { position: relative; z-index: 2; text-align: center; flex: 1; }
-        .step-icon { width: 40px; height: 40px; border-radius: 50%; background: #e0e0e0; color: #777; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; font-size: 14px; font-weight: bold; transition: 0.3s; }
-        .step.completed .step-icon { background: var(--green-primary); color: white; box-shadow: 0 0 10px rgba(27, 67, 50, 0.3); }
-        .step.active .step-icon { background: var(--accent-gold); color: white; box-shadow: 0 0 12px rgba(212, 163, 115, 0.6); transform: scale(1.1); }
-        .step-label { font-size: 11px; font-weight: 600; color: #666; }
-        .step.completed .step-label, .step.active .step-label { color: var(--green-primary); }
-
-        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: 0.3s; }
+        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: background 0.2s; }
         .btn-home:hover { background: var(--green-light); }
     </style>
 </head>
@@ -856,57 +819,53 @@ SUCCESS_TEMPLATE = """
     <div class="card">
         <div class="icon-box"><i class="fa-solid fa-check"></i></div>
         <h1>Order Tracking & Details</h1>
-        <p class="subtitle">Live status updates for your Kesh Aadar botanical shipment</p>
+        <p class="subtitle">Thank you for choosing Kesh Aadar. Here is your live order status.</p>
 
         {% if order %}
-        <div class="order-info-box">
-            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:15px; color:var(--green-primary);">{{ order.order_id }}</b></div>
-            <div class="info-row"><span>Customer Name:</span><b>{{ order.name }}</b></div>
-            <div class="info-row"><span>Email / Phone:</span><b>{{ order.email }} | {{ order.phone }}</b></div>
-            <div class="info-row"><span>Payment Status:</span><b style="color:#2e7d32;">{{ order.payment_type }}</b></div>
-            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 260px; text-align: right;">{{ order.full_address }}</span></div>
-            <hr style="border: 0; border-top: 1px solid #ddd; margin: 12px 0;">
-            <div class="info-row"><span>Ordered Items:</span></div>
-            <ul style="padding-left: 20px; font-size: 12px; color: #555; margin-bottom: 8px;">
-                {% for item in order.items %}
-                <li>{{ item.name }} - ₹{{ item.price }}</li>
-                {% endfor %}
-            </ul>
-            <div class="info-row" style="font-weight: bold; font-size: 14px; color: var(--green-primary); border-top: 1px dashed #d4a373; padding-top: 8px;">
-                <span>Total Bill (incl. taxes/fees):</span><span>₹{{ order.amount }}</span>
+        <!-- Live Stepper -->
+        {% set current = order.status_step %}
+        <div class="stepper-container">
+            <div class="step {% if current in ['Order Placed', 'Packaging', 'Shipped', 'Delivered'] %}completed{% endif %} {% if current == 'Order Placed' %}active{% endif %}">
+                <div class="step-circle"><i class="fa-solid fa-file-invoice"></i></div>
+                <div class="step-label">Placed</div>
+            </div>
+            <div class="step {% if current in ['Packaging', 'Shipped', 'Delivered'] %}completed{% endif %} {% if current == 'Packaging' %}active{% endif %}">
+                <div class="step-circle"><i class="fa-solid fa-box-open"></i></div>
+                <div class="step-label">Packaging</div>
+            </div>
+            <div class="step {% if current in ['Shipped', 'Delivered'] %}completed{% endif %} {% if current == 'Shipped' %}active{% endif %}">
+                <div class="step-circle"><i class="fa-solid fa-truck-fast"></i></div>
+                <div class="step-label">Shipped</div>
+            </div>
+            <div class="step {% if current == 'Delivered' %}completed active{% endif %}">
+                <div class="step-circle"><i class="fa-solid fa-house-chimney"></i></div>
+                <div class="step-label">Delivered</div>
             </div>
         </div>
 
-        {% set current_step = order.status_step %}
-        <div class="tracker-container">
-            <h4 style="font-size: 14px; color: var(--green-primary); margin-bottom: 15px;">Delivery Progress</h4>
-            <div class="tracker-steps">
-                <div class="step {% if current_step in ['Order Placed', 'Packaging', 'Shipped', 'Delivered'] %}completed{% endif %}">
-                    <div class="step-icon"><i class="fa-solid fa-file-invoice"></i></div>
-                    <div class="step-label">Placed</div>
-                </div>
-                <div class="step {% if current_step in ['Packaging', 'Shipped', 'Delivered'] %}completed{% elif current_step == 'Packaging' %}active{% endif %}">
-                    <div class="step-icon"><i class="fa-solid fa-box-open"></i></div>
-                    <div class="step-label">Packaging</div>
-                </div>
-                <div class="step {% if current_step in ['Shipped', 'Delivered'] %}completed{% elif current_step == 'Shipped' %}active{% endif %}">
-                    <div class="step-icon"><i class="fa-solid fa-truck-fast"></i></div>
-                    <div class="step-label">Shipped</div>
-                </div>
-                <div class="step {% if current_step == 'Delivered' %}completed active{% endif %}">
-                    <div class="step-icon"><i class="fa-solid fa-house-chimney"></i></div>
-                    <div class="step-label">Delivered</div>
-                </div>
-            </div>
+        <div class="order-info-box">
+            <div class="info-row"><span>Order Reference ID:</span><b style="font-family:monospace; font-size:15px; color:var(--green-primary);">{{ order.order_id }}</b></div>
+            <div class="info-row"><span>Customer Name:</span><b>{{ order.name }}</b></div>
+            <div class="info-row"><span>Email / Phone:</span><b>{{ order.email }} | {{ order.phone }}</b></div>
+            <div class="info-row"><span>Payment Status:</span><b style="color: #2e7d32;">{{ order.payment_type }}</b></div>
+            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 260px; text-align: right;">{{ order.full_address }}</span></div>
+            <hr style="border: 0; border-top: 1px dashed #d4a373; margin: 12px 0;">
+            <div class="info-row"><span>Items Ordered:</span><span><b>{{ order.items | length }} item(s)</b></span></div>
+            {% for item in order.items %}
+            <div class="info-row" style="padding-left: 10px; font-size: 12px; color: #666;"><span>• {{ item.name }}</span><span>₹{{ item.price }}</span></div>
+            {% endfor %}
+            <div class="info-row" style="margin-top: 10px; font-size: 15px; font-weight: bold; color: var(--green-primary);"><span>Total Bill (Incl. Taxes & Fees):</span><span>₹{{ order.amount }}</span></div>
         </div>
         {% else %}
-        <div class="order-info-box" style="text-align: center;">
-            <p style="color: #c62828;">Order reference not found or expired.</p>
-            <b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order_id }}</b>
+        <div class="order-info-box">
+            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order_id }}</b></div>
+            <p style="color: #c62828; font-size: 13px; margin-top: 10px;">Order details could not be retrieved in current serverless session.</p>
         </div>
         {% endif %}
 
-        <a href="/" class="btn-home" style="margin-top: 15px;">Return to Storefront</a>
+        <p style="font-size: 12px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> Official confirmation & invoice have been sent to your registered email.</p>
+        
+        <a href="/" class="btn-home">Continue Shopping</a>
     </div>
 
 </body>
@@ -921,152 +880,128 @@ ADMIN_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | KESH AADAR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root { --green-primary: #1b4332; --cream: #FAF7F0; --cream-dark: #F3EFEA; --accent-gold: #d4a373; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
-        body { background-color: var(--cream); display: flex; min-height: 100vh; color: #333; }
+        body { background: var(--cream); color: #333; display: flex; min-height: 100vh; }
 
         /* Admin Sidebar */
-        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 30px 20px; display: flex; flex-direction: column; justify-content: space-between; position: fixed; height: 100%; left: 0; top: 0; z-index: 100; transition: transform 0.4s ease; }
-        .admin-logo { font-size: 20px; font-weight: 700; color: var(--accent-gold); margin-bottom: 30px; display: flex; align-items: center; justify-content: space-between; }
-        .admin-nav { display: flex; flex-direction: column; gap: 10px; flex: 1; }
-        .admin-nav button { background: none; border: none; color: white; padding: 12px 15px; text-align: left; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 14px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
-        .admin-nav button:hover, .admin-nav button.active { background: rgba(255,255,255,0.1); color: var(--accent-gold); }
+        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 25px 20px; display: flex; flex-direction: column; justify-content: space-between; }
+        .admin-brand { font-size: 20px; font-weight: 700; margin-bottom: 30px; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
+        .admin-brand img { width: 35px; height: 35px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent-gold); }
+        .nav-links { display: flex; flex-direction: column; gap: 10px; flex: 1; }
+        .nav-links button { background: none; border: none; color: #ccc; text-align: left; padding: 12px 15px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
+        .nav-links button:hover, .nav-links button.active { background: rgba(255,255,255,0.1); color: white; }
+        .nav-links button i { color: var(--accent-gold); width: 20px; }
 
-        /* Main Content */
-        .admin-main { margin-left: 260px; flex: 1; padding: 40px; overflow-y: auto; }
-        .tab-section { display: none; }
-        .tab-section.active { display: block; }
-
-        h2 { color: var(--green-primary); margin-bottom: 25px; font-size: 24px; }
+        /* Admin Main Content */
+        .admin-main { flex: 1; padding: 30px; overflow-y: auto; max-height: 100vh; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        h2 { color: var(--green-primary); font-size: 24px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); margin-bottom: 25px; }
         
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #f8f9fa; color: var(--green-primary); font-weight: 600; }
+        form label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: var(--green-primary); }
+        form input, form select, form textarea { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 13px; }
+        .btn-submit { background: var(--green-primary); color: white; padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+        .btn-submit:hover { background: #2d6a4f; }
 
-        .form-control { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 13px; }
-        .btn { background: var(--green-primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
-        .btn-danger { background: #c62828; }
-        .btn-warning { background: #e65100; }
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: var(--cream-dark); color: var(--green-primary); font-weight: 600; }
         
         .badge { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-        .badge-active { background: #e8f5e9; color: #2e7d32; }
-        .badge-suspended { background: #ffebee; color: #c62828; }
+        .badge.active { background: #e8f5e9; color: #2e7d32; }
+        .badge.suspended { background: #ffebee; color: #c62828; }
     </style>
 </head>
 <body>
 
-    <!-- Admin Sidebar -->
-    <div class="admin-sidebar" id="adminSidebar">
+    <div class="admin-sidebar">
         <div>
-            <div class="admin-logo">
-                <span>KESH ADMIN</span>
-                <i class="fa-solid fa-xmark" style="cursor:pointer;" onclick="toggleAdminSidebar()"></i>
-            </div>
-            <div class="admin-nav">
-                <button class="active" onclick="switchTab('orders', this)"><i class="fa-solid fa-box"></i> Customer Orders</button>
-                <button onclick="switchTab('products', this)"><i class="fa-solid fa-tags"></i> Product Management</button>
+            <div class="admin-brand"><img src="{{ logo_url }}" alt="Logo"> Kesh Aadar Admin</div>
+            <div class="nav-links">
+                <button class="active" onclick="switchTab('orders', this)"><i class="fa-solid fa-clipboard-list"></i> Customer Orders</button>
+                <button onclick="switchTab('products', this)"><i class="fa-solid fa-boxes-stacked"></i> Inventory & Products</button>
+                <button onclick="switchTab('add-product', this)"><i class="fa-solid fa-square-plus"></i> Add New Product</button>
                 <button onclick="switchTab('logo', this)"><i class="fa-solid fa-image"></i> Website Logo</button>
-                <button onclick="window.location.href='/'"><i class="fa-solid fa-store"></i> View Storefront</button>
             </div>
         </div>
-        <div style="font-size: 11px; color: #aaa; text-align: center;">Secure Admin Panel v2.6</div>
+        <div>
+            <a href="/" target="_blank" style="color: var(--accent-gold); text-decoration: none; font-size: 13px; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Visit Storefront</a>
+        </div>
     </div>
 
-    <!-- Main Dashboard Area -->
     <div class="admin-main">
-        
-        <!-- Top bar with toggle button if closed -->
-        <div style="margin-bottom: 20px;">
-            <button class="btn" onclick="toggleAdminSidebar()" style="background: var(--green-primary);"><i class="fa-solid fa-bars"></i> Toggle Menu</button>
-        </div>
-
         <!-- ORDERS TAB -->
-        <div id="tab-orders" class="tab-section active">
-            <h2>Customer Orders Management</h2>
+        <div id="tab-orders" class="tab-content active">
+            <h2>Customer Orders <span style="font-size:14px; color:#666;">({{ orders | length }} Total)</span></h2>
             <div class="card">
-                <div style="overflow-x: auto;">
+                {% if orders %}
+                <div style="overflow-x:auto;">
                     <table>
                         <thead>
                             <tr>
                                 <th>Order ID & Date</th>
-                                <th>Customer Details</th>
-                                <th>Items & Amount</th>
-                                <th>Shipping Address</th>
+                                <th>Customer Info</th>
+                                <th>Delivery Address</th>
+                                <th>Items & Total</th>
                                 <th>Status Control</th>
-                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% if orders %}
-                                {% for o in orders %}
-                                <tr>
-                                    <td><b>{{ o.order_id }}</b><br><span style="font-size:11px; color:#666;">{{ o.date }}</span></td>
-                                    <td><b>{{ o.name }}</b><br>{{ o.phone }}<br>{{ o.email }}</td>
-                                    <td>₹<b>{{ o.amount }}</b> ({{ o.payment_type }})<br><span style="font-size:11px; color:#555;">{{ o.items | length }} items</span></td>
-                                    <td style="font-size:12px; max-width:200px;">{{ o.full_address }}</td>
-                                    <td>
-                                        <select class="form-control" style="margin:0; width:140px; font-size:12px;" onchange="updateOrderStatus('{{ o.order_id }}', this.value)">
-                                            <option value="Order Placed" {% if o.status_step == 'Order Placed' %}selected{% endif %}>Order Placed</option>
-                                            <option value="Packaging" {% if o.status_step == 'Packaging' %}selected{% endif %}>Packaging</option>
-                                            <option value="Shipped" {% if o.status_step == 'Shipped' %}selected{% endif %}>Shipped</option>
-                                            <option value="Delivered" {% if o.status_step == 'Delivered' %}selected{% endif %}>Delivered</option>
-                                        </select>
-                                    </td>
-                                    <td>
-                                        <button class="btn btn-danger" style="padding:6px 10px; font-size:11px;" onclick="deleteOrder('{{ o.order_id }}')"><i class="fa-solid fa-trash"></i></button>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                                <tr><td colspan="6" style="text-align:center; color:#888; padding:30px;">No orders placed yet.</td></tr>
-                            {% endif %}
+                            {% for o in orders %}
+                            <tr>
+                                <td>
+                                    <b style="color:var(--green-primary); font-family:monospace;">{{ o.order_id }}</b><br>
+                                    <span style="font-size:11px; color:#777;">{{ o.date }}</span>
+                                </td>
+                                <td>
+                                    <b>{{ o.name }}</b><br>
+                                    <i class="fa-solid fa-phone" style="font-size:10px;"></i> {{ o.phone }}<br>
+                                    <i class="fa-solid fa-envelope" style="font-size:10px;"></i> {{ o.email }}
+                                </td>
+                                <td style="font-size:12px; max-width: 220px;">
+                                    {{ o.full_address }}
+                                </td>
+                                <td>
+                                    <b>₹{{ o.amount }}</b> <span style="font-size:11px; color:#2e7d32;">({{ o.payment_type }})</span><br>
+                                    <span style="font-size:11px; color:#555;">{{ o.items | length }} items</span>
+                                </td>
+                                <td>
+                                    <select onchange="updateOrderStatus('{{ o.order_id }}', this.value)" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid #ccc; font-weight:600;">
+                                        <option value="Order Placed" {% if o.status_step == 'Order Placed' %}selected{% endif %}>1. Order Placed</option>
+                                        <option value="Packaging" {% if o.status_step == 'Packaging' %}selected{% endif %}>2. Packaging</option>
+                                        <option value="Shipped" {% if o.status_step == 'Shipped' %}selected{% endif %}>3. Shipped</option>
+                                        <option value="Delivered" {% if o.status_step == 'Delivered' %}selected{% endif %}>4. Delivered</option>
+                                    </select>
+                                </td>
+                            </tr>
+                            {% endfor %}
                         </tbody>
                     </table>
                 </div>
+                {% else %}
+                <p style="text-align:center; color:#777; padding:30px;">No customer orders received yet.</p>
+                {% endif %}
             </div>
         </div>
 
-        <!-- PRODUCTS TAB -->
-        <div id="tab-products" class="tab-section">
-            <h2>Product & Inventory Management</h2>
-            
+        <!-- PRODUCTS INVENTORY TAB -->
+        <div id="tab-products" class="tab-content">
+            <h2>Inventory Management</h2>
             <div class="card">
-                <h3 style="font-size:16px; color:var(--green-primary); margin-bottom:15px;"><i class="fa-solid fa-plus-circle"></i> Add New Botanical Product</h3>
-                <form action="/admin/api/product/add" method="POST" enctype="multipart/form-data">
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-                        <input type="text" name="name" class="form-control" placeholder="Product Name *" required>
-                        <input type="text" name="category" class="form-control" placeholder="Category (e.g., Skincare) *" required>
-                        <input type="number" name="price" class="form-control" placeholder="Price (INR) *" required>
-                        <input type="number" name="stock" class="form-control" placeholder="Stock Quantity *" required>
-                    </div>
-                    <textarea name="desc" class="form-control" placeholder="Product Description *" rows="2" required></textarea>
-                    
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:10px; font-size:13px;">
-                        <div>
-                            <label style="display:block; font-weight:600; margin-bottom:5px;">Product Image File (Gallery):</label>
-                            <input type="file" name="image_file" accept="image/*" class="form-control">
-                        </div>
-                        <div>
-                            <label style="display:block; font-weight:600; margin-bottom:5px;">Product Video File (Optional):</label>
-                            <input type="file" name="video_file" accept="video/*" class="form-control">
-                        </div>
-                    </div>
-                    <button type="submit" class="btn">Upload Product</button>
-                </form>
-            </div>
-
-            <div class="card">
-                <h3 style="font-size:16px; color:var(--green-primary); margin-bottom:15px;">Existing Inventory</h3>
                 <table>
                     <thead>
                         <tr>
-                            <th>Preview</th>
-                            <th>Name & Category</th>
-                            <th>Price & Stock</th>
+                            <th>Product</th>
+                            <th>Category</th>
+                            <th>Price (₹)</th>
+                            <th>Stock</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -1075,21 +1010,31 @@ ADMIN_TEMPLATE = """
                         {% for p in products %}
                         <tr>
                             <td>
-                                <img src="{{ p.image }}" style="width:45px; height:45px; object-fit:cover; border-radius:6px;">
+                                <div style="display:flex; align-items:center; gap:10px;">
+                                    <img src="{{ p.image }}" style="width:36px; height:36px; object-fit:cover; border-radius:6px;">
+                                    <b>{{ p.name }}</b>
+                                </div>
                             </td>
-                            <td><b>{{ p.name }}</b><br><span style="font-size:11px; color:#666;">{{ p.category }}</span></td>
-                            <td>₹<input type="number" id="price-{{ p.id }}" value="{{ p.price }}" style="width:70px; padding:4px;" /> | Stock: <input type="number" id="stock-{{ p.id }}" value="{{ p.stock }}" style="width:50px; padding:4px;" /></td>
+                            <td>{{ p.category }}</td>
                             <td>
-                                {% if p.status == 'suspended' %}
-                                <span class="badge badge-suspended">Suspended</span>
-                                {% else %}
-                                <span class="badge badge-active">Live</span>
-                                {% endif %}
+                                <form action="/api/admin/products/{{ p.id }}/update" method="POST" style="display:inline-flex; gap:5px; align-items:center; margin:0;">
+                                    <input type="number" name="price" value="{{ p.price }}" style="width:75px; margin:0; padding:4px;">
                             </td>
                             <td>
-                                <button class="btn" style="padding:6px 10px; font-size:11px;" onclick="saveProduct({{ p.id }})">Save</button>
-                                <button class="btn btn-warning" style="padding:6px 10px; font-size:11px;" onclick="toggleProductStatus({{ p.id }})">Toggle</button>
-                                <button class="btn btn-danger" style="padding:6px 10px; font-size:11px;" onclick="deleteProduct({{ p.id }})"><i class="fa-solid fa-trash"></i></button>
+                                    <input type="number" name="stock" value="{{ p.stock }}" style="width:60px; margin:0; padding:4px;">
+                            </td>
+                            <td>
+                                    <select name="status" style="width:90px; margin:0; padding:4px; font-size:11px;">
+                                        <option value="active" {% if p.status == 'active' %}selected{% endif %}>Active</option>
+                                        <option value="suspended" {% if p.status == 'suspended' %}selected{% endif %}>Suspended</option>
+                                    </select>
+                            </td>
+                            <td>
+                                    <button type="submit" class="btn-submit" style="padding:4px 8px; font-size:11px;">Save</button>
+                                </form>
+                                <form action="/api/admin/products/{{ p.id }}/delete" method="POST" style="display:inline; margin-left:5px;" onsubmit="return confirm('Delete this product?');">
+                                    <button type="submit" style="background:#c62828; color:white; border:none; padding:5px 8px; border-radius:6px; cursor:pointer;"><i class="fa-solid fa-trash"></i></button>
+                                </form>
                             </td>
                         </tr>
                         {% endfor %}
@@ -1098,100 +1043,80 @@ ADMIN_TEMPLATE = """
             </div>
         </div>
 
-        <!-- LOGO TAB -->
-        <div id="tab-logo" class="tab-section">
-            <h2>Website Logo & Branding</h2>
-            <div class="card" style="max-width: 500px;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <img src="{{ logo.url }}" style="width: 90px; height: 90px; object-fit: cover; border-radius: 50%; border: 3px solid var(--accent-gold);">
-                    <p style="margin-top: 10px; font-size: 13px; color: #666;">Current Storefront Logo</p>
-                </div>
-                <form id="logoForm" onsubmit="event.preventDefault(); uploadLogo();">
-                    <label style="display:block; font-weight:600; margin-bottom:8px; font-size:13px;">Upload New Logo from Gallery:</label>
-                    <input type="file" id="logoFileInput" accept="image/*" class="form-control" required>
-                    <button type="submit" class="btn" style="width:100%; margin-top:10px;">Update Website Logo</button>
+        <!-- ADD PRODUCT TAB -->
+        <div id="tab-add-product" class="tab-content">
+            <h2>Upload New Product</h2>
+            <div class="card" style="max-width: 600px;">
+                <form action="/api/admin/products" method="POST" enctype="multipart/form-data">
+                    <label>Product Name *</label>
+                    <input type="text" name="name" required placeholder="e.g. Organic Rose Water Toner">
+                    
+                    <label>Category *</label>
+                    <select name="category" required>
+                        <option value="Skincare">Skincare</option>
+                        <option value="Haircare">Haircare</option>
+                        <option value="Wellness">Wellness</option>
+                    </select>
+
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                        <div>
+                            <label>Price (₹) *</label>
+                            <input type="number" name="price" required placeholder="399">
+                        </div>
+                        <div>
+                            <label>Initial Stock *</label>
+                            <input type="number" name="stock" required placeholder="50">
+                        </div>
+                    </div>
+
+                    <label>Product Image File (Gallery Upload) *</label>
+                    <input type="file" name="image_file" accept="image/*" required>
+
+                    <label>Product Video File (Optional Gallery Upload)</label>
+                    <input type="file" name="video_file" accept="video/*">
+
+                    <label>Description</label>
+                    <textarea name="desc" rows="3" placeholder="Brief botanical description..."></textarea>
+
+                    <button type="submit" class="btn-submit" style="width:100%;">Publish Product</button>
                 </form>
             </div>
         </div>
 
+        <!-- WEBSITE LOGO TAB -->
+        <div id="tab-logo" class="tab-content">
+            <h2>Manage Website Logo</h2>
+            <div class="card" style="max-width: 500px; text-align: center;">
+                <div style="margin-bottom: 20px;">
+                    <img src="{{ logo_url }}" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid var(--accent-gold);">
+                </div>
+                <form action="/api/admin/logo" method="POST" enctype="multipart/form-data" style="text-align: left;">
+                    <label>Upload New Logo Image (Gallery)</label>
+                    <input type="file" name="logo_file" accept="image/*" required>
+                    <button type="submit" class="btn-submit" style="width: 100%; margin-top: 10px;">Update Website Logo</button>
+                </form>
+            </div>
+        </div>
     </div>
 
     <script>
-        function toggleAdminSidebar() {
-            let sb = document.getElementById('adminSidebar');
-            sb.style.transform = sb.style.transform === 'translateX(-260px)' ? 'translateX(0)' : 'translateX(-260px)';
-        }
-
         function switchTab(tabId, btn) {
-            document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
-            document.querySelectorAll('.admin-nav button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-links button').forEach(el => el.classList.remove('active'));
             document.getElementById('tab-' + tabId).classList.add('active');
             btn.classList.add('active');
         }
 
-        function updateOrderStatus(order_id, status_step) {
-            fetch('/admin/api/update_status', {
+        function updateOrderStatus(orderId, newStatus) {
+            fetch('/api/admin/orders/' + orderId + '/status', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ order_id, status_step })
-            }).then(r => r.json()).then(res => {
-                if(res.status === 'success') {
-                    alert('Order status successfully updated to: ' + status_step);
-                }
-            });
-        }
-
-        function deleteOrder(order_id) {
-            if(confirm('Are you sure you want to delete order ' + order_id + '?')) {
-                fetch('/admin/api/delete_order', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ order_id })
-                }).then(() => location.reload());
-            }
-        }
-
-        function saveProduct(id) {
-            let price = document.getElementById('price-' + id).value;
-            let stock = document.getElementById('stock-' + id).value;
-            fetch('/admin/api/product/edit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, price, stock })
-            }).then(() => alert('Product updated successfully!'));
-        }
-
-        function toggleProductStatus(id) {
-            fetch('/admin/api/product/toggle_status', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id })
-            }).then(() => location.reload());
-        }
-
-        function deleteProduct(id) {
-            if(confirm('Permanently delete this product?')) {
-                fetch('/admin/api/product/delete', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id })
-                }).then(() => location.reload());
-            }
-        }
-
-        function uploadLogo() {
-            let fileInput = document.getElementById('logoFileInput');
-            if(fileInput.files.length === 0) return alert('Please select an image file.');
-            let formData = new FormData();
-            formData.append('logo_file', fileInput.files[0]);
-
-            fetch('/admin/api/logo', {
-                method: 'POST',
-                body: formData
-            }).then(r => r.json()).then(res => {
-                if(res.status === 'success') {
-                    alert('Website logo updated successfully!');
-                    location.reload();
+                body: JSON.stringify({ status: newStatus })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.status === 'success') {
+                    alert('Order status successfully updated to: ' + newStatus);
                 }
             });
         }
