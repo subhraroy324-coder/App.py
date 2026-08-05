@@ -1,7 +1,6 @@
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 import json
 import smtplib
-import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import datetime
@@ -9,7 +8,7 @@ import random
 import base64
 
 app = Flask(__name__)
-app.secret_key = 'kesh_aadar_secure_key_2026'
+app.secret_key = 'adorica_botanicals_secure_key_2026'
 
 # --- EMAIL CONFIGURATION ---
 SMTP_SERVER = "smtp.gmail.com"
@@ -20,7 +19,7 @@ SMTP_PASS = "zvxb mrbs ccoi vfrl"
 # --- DATABASE & STORAGE ---
 SETTINGS = {
     "logo": "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80",
-    "brand_name": "Kesh Aadar"
+    "brand_name": "THE ADORICA BOTANICALS"
 }
 
 PRODUCTS = [
@@ -73,12 +72,12 @@ PRODUCTS = [
 ORDERS = []
 BLACKLISTED_IPS = []
 
-# --- BACKGROUND EMAIL SENDER ---
+# --- SAFE EMAIL SENDER (Serverless Compatible) ---
 def send_order_email(recipient_email, name, order_id, amount, items, full_address):
     try:
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"Order Confirmed: {order_id} - KESH AADAR"
-        msg['From'] = f"KESH AADAR <{SMTP_EMAIL}>"
+        msg['Subject'] = f"Order Confirmed: {order_id} - THE ADORICA BOTANICALS"
+        msg['From'] = f"THE ADORICA BOTANICALS <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
         items_html = "".join([f"<li><b>{i['name']}</b> (Qty: {i.get('quantity', 1)}) - ₹{i['price']}</li>" for i in items])
@@ -88,8 +87,8 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
         <html>
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
             <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
-                <h1 style="font-size: 36px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">KESH AADAR</h1>
-                <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 12px; font-weight: bold; margin-top: 0; text-align: center;">Pure Botanical Remedies</p>
+                <h1 style="font-size: 26px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">THE ADORICA BOTANICALS</h1>
+                <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">Pure Botanical Remedies</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
                 <div style="background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%); color: white; padding: 25px; border-radius: 15px; text-align: center; margin-bottom: 25px;">
@@ -125,14 +124,13 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
         """
         msg.attach(MIMEText(html_content, 'html'))
         
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=5)
         server.starttls()
         server.login(SMTP_EMAIL, SMTP_PASS)
         server.sendmail(SMTP_EMAIL, recipient_email, msg.as_string())
         server.quit()
-        print(f"Confirmation email successfully delivered to {recipient_email}")
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        print(f"Email delivery skipped/failed: {e}")
 
 @app.after_request
 def add_cors_headers(response):
@@ -155,27 +153,25 @@ def index():
 
 @app.route('/place_order', methods=['POST'])
 def place_order():
-    data = request.get_json()
-    order_id = "KESH-" + str(random.randint(10000, 99999))
-    data['order_id'] = order_id
-    data['date'] = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p")
-    data['client_ip'] = request.remote_addr
-    data['status_step'] = 1  # 1: Order Placed, 2: Packaging, 3: Shipped, 4: Delivered
-    data['status_text'] = "Order Placed"
-    
-    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', '')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
-    data['full_address'] = full_address
-    
-    ORDERS.append(data)
-    
-    # Send background email instantly
-    email_thread = threading.Thread(
-        target=send_order_email, 
-        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address)
-    )
-    email_thread.start()
-    
-    return jsonify({"status": "success", "order_id": order_id, "date": data['date']})
+    try:
+        data = request.get_json()
+        order_id = "ADOR-" + str(random.randint(10000, 99999))
+        data['order_id'] = order_id
+        data['date'] = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p")
+        data['client_ip'] = request.remote_addr
+        data['status_step'] = 1
+        data['status_text'] = "Order Placed"
+        
+        full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', '')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
+        data['full_address'] = full_address
+        
+        ORDERS.append(data)
+        
+        send_order_email(data['email'], data['name'], order_id, data['amount'], data['items'], full_address)
+        
+        return jsonify({"status": "success", "order_id": order_id, "date": data['date']})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/order_success/<order_id>')
 def order_success_page(order_id):
@@ -216,16 +212,13 @@ def admin_add_product():
     stock = int(request.form.get('stock', 0))
     desc = request.form.get('desc', '')
     
-    # Handle image file upload -> Base64
     image_file = request.files.get('image_file')
-    image_b64 = ""
     if image_file and image_file.filename != '':
         img_bytes = image_file.read()
         image_b64 = f"data:{image_file.content_type};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
     else:
         image_b64 = "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80"
 
-    # Handle video file upload -> Base64
     video_file = request.files.get('video_file')
     video_b64 = ""
     if video_file and video_file.filename != '':
@@ -278,14 +271,14 @@ def admin_update_logo():
     return redirect('/admin')
 
 
-# --- FRONTEND TEMPLATE ---
+# --- FRONTEND TEMPLATES ---
 TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KESH AADAR | Pure Herbal Botanicals</title>
+    <title>THE ADORICA BOTANICALS | Pure Herbal Botanicals</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
@@ -302,12 +295,11 @@ TEMPLATE = """
         .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; }
         .brand-container { display: flex; align-items: center; gap: 12px; cursor: pointer; }
         .logo-img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); }
-        .logo { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: var(--green-primary); letter-spacing: 1px; text-transform: uppercase; }
+        .logo { font-family: 'Playfair Display', serif; font-size: 20px; font-weight: 700; color: var(--green-primary); letter-spacing: 0.5px; text-transform: uppercase; }
         .logo span { color: var(--accent-gold); }
         .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; }
         .cart-badge { position: absolute; top: -5px; right: -5px; background: var(--green-light); color: white; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 50%; }
 
-        /* Premium Sidebar Drawer Animation */
         .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
         .sidebar-overlay.active { opacity: 1; visibility: visible; }
         .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
@@ -323,7 +315,6 @@ TEMPLATE = """
         .sidebar button.action-btn { width: 100%; padding: 12px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
         .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); }
 
-        /* Hero */
         .hero { height: 80vh; display: flex; align-items: center; justify-content: center; text-align: center; background: radial-gradient(circle, #f3efea 0%, #faf7f0 75%); margin-top: 70px; padding: 0 20px; }
         .hero-content h1 { font-family: 'Playfair Display', serif; font-size: clamp(34px, 6vw, 54px); color: var(--green-primary); margin-bottom: 15px; }
         .btn-primary { background: var(--green-primary); color: white; padding: 14px 38px; border-radius: 35px; text-decoration: none; font-weight: 600; border: none; cursor: pointer; display: inline-block; transition: 0.3s; }
@@ -332,7 +323,6 @@ TEMPLATE = """
         .features-banner { background: var(--green-primary); color: white; display: flex; justify-content: space-around; padding: 20px; flex-wrap: wrap; gap: 15px; }
         .feature-item { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; }
 
-        /* Products Grid */
         .container { max-width: 1200px; margin: 0 auto; padding: 50px 20px; }
         .product-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 30px; }
         .product-card { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); transition: 0.3s; }
@@ -348,7 +338,6 @@ TEMPLATE = """
 
         .fly-item { position: fixed; z-index: 9999; width: 50px; height: 50px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); transition: all 0.8s cubic-bezier(0.2, 1, 0.3, 1); pointer-events: none; }
 
-        /* Modal */
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); display: none; justify-content: center; align-items: center; z-index: 3000; padding: 15px; }
         .modal-content { background: white; width: 100%; max-width: 520px; padding: 30px; border-radius: 20px; max-height: 90vh; overflow-y: auto; position: relative; }
         
@@ -362,7 +351,6 @@ TEMPLATE = """
 
         .saved-addr-btn { background: #e8f5e9; color: #2e7d32; border: 1px dashed #2e7d32; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; width: 100%; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
 
-        /* Footer */
         .main-footer { background-color: var(--green-primary); color: white; padding: 50px 30px 20px; margin-top: 60px; }
         .footer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 30px; max-width: 1200px; margin: 0 auto; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 30px; }
         .footer-grid h3 { color: var(--accent-gold); font-family: 'Playfair Display'; font-size: 20px; margin-bottom: 15px; }
@@ -379,7 +367,7 @@ TEMPLATE = """
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
                 <img src="{{ settings.logo }}" alt="Logo" class="logo-img" id="header-logo">
-                <div class="logo"><span>Kesh</span> Aadar</div>
+                <div class="logo"><span>Adorica</span> Botanicals</div>
             </div>
         </div>
         <div class="cart-icon-container" id="cartTarget" onclick="openCartModal()">
@@ -387,7 +375,6 @@ TEMPLATE = """
         </div>
     </header>
 
-    <!-- Sidebar Drawer -->
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
     <div class="sidebar" id="sidebar">
         <span class="close-sidebar" onclick="toggleSidebar()">&times;</span>
@@ -424,7 +411,6 @@ TEMPLATE = """
         </div>
     </div>
 
-    <!-- Hero -->
     <section class="hero reveal">
         <div class="hero-content">
             <h1>Pure Botanical Wellness</h1>
@@ -433,14 +419,12 @@ TEMPLATE = """
         </div>
     </section>
 
-    <!-- Features -->
     <div class="features-banner">
         <div class="feature-item"><i class="fa-solid fa-leaf" style="color:var(--accent-gold);"></i> 100% Organic</div>
         <div class="feature-item"><i class="fa-solid fa-truck-fast" style="color:var(--accent-gold);"></i> Express Shipping</div>
         <div class="feature-item"><i class="fa-solid fa-shield-cat" style="color:var(--accent-gold);"></i> Cruelty-Free</div>
     </div>
 
-    <!-- Shop -->
     <div class="container" id="shop">
         <h2 style="font-family: 'Playfair Display'; font-size: 28px; color: var(--green-primary); margin-bottom: 30px;" class="reveal">Our Formulations</h2>
         <div class="product-grid">
@@ -470,11 +454,10 @@ TEMPLATE = """
         </div>
     </div>
 
-    <!-- Footer -->
     <footer class="main-footer">
         <div class="footer-grid">
             <div>
-                <h3>KESH AADAR</h3>
+                <h3>THE ADORICA BOTANICALS</h3>
                 <p style="font-size: 13px; line-height: 1.7;">Bringing ancient botanical secrets directly into your daily routine. Pure and natural.</p>
             </div>
             <div>
@@ -491,11 +474,10 @@ TEMPLATE = """
             </div>
         </div>
         <div class="footer-bottom">
-            &copy; 2026 Kesh Aadar Botanical Remedies. All Rights Reserved.
+            &copy; 2026 The Adorica Botanicals. All Rights Reserved.
         </div>
     </footer>
 
-    <!-- Cart / Checkout Modal -->
     <div class="modal" id="cartModal">
         <div class="modal-content">
             <span class="close-sidebar" onclick="document.getElementById('cartModal').style.display='none'" style="position:absolute; right:20px; top:20px;">&times;</span>
@@ -535,7 +517,6 @@ TEMPLATE = """
                         </label>
                     </div>
 
-                    <!-- Itemized Invoice Breakdown -->
                     <div class="bill-summary">
                         <div class="bill-row"><span>Items Subtotal:</span><span id="bill-subtotal">₹0</span></div>
                         <div class="bill-row" id="cod-fee-row" style="display:none; color:#c62828;"><span>COD Handling Fee:</span><span>₹99</span></div>
@@ -574,7 +555,6 @@ TEMPLATE = """
             document.getElementById('sidebar-'+v+'-view').style.display = 'block';
         }
 
-        // Flying Cart Animation
         function addToCartAndFly(event, id) {
             let p = productsData.find(x => x.id === id);
             let existing = cart.find(x => x.id === id);
@@ -691,12 +671,12 @@ TEMPLATE = """
         }
 
         function checkSavedAddressAvailability() {
-            let saved = localStorage.getItem('kesh_saved_address');
+            let saved = localStorage.getItem('adorica_saved_address');
             if(saved) { document.getElementById('useSavedAddrBtn').style.display = 'flex'; }
         }
 
         function saveAddressToStorage(data) {
-            localStorage.setItem('kesh_saved_address', JSON.stringify({
+            localStorage.setItem('adorica_saved_address', JSON.stringify({
                 name: data.name, email: data.email, phone: data.phone,
                 pincode: data.pincode, city: data.city, state: data.state,
                 landmark: data.landmark, street: data.street
@@ -704,7 +684,7 @@ TEMPLATE = """
         }
 
         function loadSavedAddress() {
-            let saved = localStorage.getItem('kesh_saved_address');
+            let saved = localStorage.getItem('adorica_saved_address');
             if(saved) {
                 let d = JSON.parse(saved);
                 document.getElementById('cust-name').value = d.name || '';
@@ -748,7 +728,7 @@ TEMPLATE = """
                     "key": "rzp_live_TGzOHwqjwcYfov", 
                     "amount": amt * 100, 
                     "currency": "INR", 
-                    "name": "KESH AADAR",
+                    "name": "THE ADORICA BOTANICALS",
                     "description": "Botanical Products Order",
                     "handler": function (res) { 
                         payload.payment_id = res.razorpay_payment_id;
@@ -794,14 +774,13 @@ TEMPLATE = """
 </html>
 """
 
-# --- ANIMATED DEDICATED ORDER SUCCESS & TRACKING TEMPLATE ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Tracking & Confirmation | KESH AADAR</title>
+    <title>Order Tracking & Confirmation | THE ADORICA BOTANICALS</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -815,10 +794,9 @@ SUCCESS_TEMPLATE = """
         .card { background: white; max-width: 650px; width: 100%; padding: 40px 30px; border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); text-align: center; }
         .icon-box { font-size: 45px; color: white; background: #2e7d32; border-radius: 50%; width: 85px; height: 85px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
         
-        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 30px; margin-bottom: 5px; }
+        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 26px; margin-bottom: 5px; }
         p.subtitle { color: #666; font-size: 14px; margin-bottom: 25px; }
 
-        /* Amazon/Flipkart Style Progress Tracker */
         .tracker-container { display: flex; justify-content: space-between; position: relative; margin: 35px 0 25px 0; padding: 0 20px; }
         .tracker-container::before { content: ''; position: absolute; top: 18px; left: 40px; right: 40px; height: 4px; background: #e0e0e0; z-index: 1; }
         .tracker-step { position: relative; z-index: 2; text-align: center; flex: 1; }
@@ -838,10 +816,9 @@ SUCCESS_TEMPLATE = """
     <div class="card">
         <div class="icon-box"><i class="fa-solid fa-check"></i></div>
         <h1>Order Tracking & Confirmation</h1>
-        <p class="subtitle">Thank you for choosing Kesh Aadar. Your order status is updated live below.</p>
+        <p class="subtitle">Thank you for choosing The Adorica Botanicals. Your order status is updated live below.</p>
 
         {% if order %}
-        <!-- Progress Tracker -->
         <div class="tracker-container">
             <div class="tracker-step {% if order.status_step >= 1 %}active{% endif %}">
                 <div class="step-icon"><i class="fa-solid fa-clipboard-list"></i></div>
@@ -885,7 +862,6 @@ SUCCESS_TEMPLATE = """
         {% endif %}
 
         <p style="font-size: 12px; color: #888; margin-bottom: 15px;"><i class="fa-solid fa-envelope"></i> An official confirmation email has been dispatched to your inbox.</p>
-        
         <a href="/" class="btn-home">Continue Shopping</a>
     </div>
 
@@ -893,14 +869,13 @@ SUCCESS_TEMPLATE = """
 </html>
 """
 
-# --- ADMIN PANEL TEMPLATE ---
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard | KESH AADAR</title>
+    <title>Admin Dashboard | THE ADORICA BOTANICALS</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -908,15 +883,13 @@ ADMIN_TEMPLATE = """
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background-color: var(--cream); display: flex; min-height: 100vh; }
 
-        /* Admin Sidebar */
         .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 30px 20px; display: flex; flex-direction: column; justify-content: space-between; position: fixed; height: 100%; left: 0; top: 0; z-index: 100; transition: 0.3s; }
-        .admin-brand { font-size: 20px; font-weight: 700; margin-bottom: 30px; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
+        .admin-brand { font-size: 16px; font-weight: 700; margin-bottom: 30px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 10px; }
         .admin-nav { display: flex; flex-direction: column; gap: 10px; flex: 1; }
         .admin-nav button { background: none; border: none; color: white; padding: 12px 15px; text-align: left; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
         .admin-nav button:hover, .admin-nav button.active { background: rgba(255,255,255,0.15); color: var(--accent-gold); }
         .admin-nav button i { width: 20px; }
 
-        /* Admin Content Area */
         .admin-content { margin-left: 260px; flex: 1; padding: 40px; overflow-y: auto; }
         .admin-section { display: none; }
         .admin-section.active { display: block; }
@@ -940,7 +913,6 @@ ADMIN_TEMPLATE = """
 </head>
 <body>
 
-    <!-- Admin Sidebar -->
     <div class="admin-sidebar" id="adminSidebar">
         <div>
             <div class="admin-brand">
@@ -958,10 +930,7 @@ ADMIN_TEMPLATE = """
         </div>
     </div>
 
-    <!-- Admin Main Content -->
     <div class="admin-content">
-        
-        <!-- ORDERS SECTION -->
         <div id="tab-orders" class="admin-section active">
             <h2>Customer Orders Management</h2>
             <div class="card">
@@ -1007,7 +976,6 @@ ADMIN_TEMPLATE = """
             </div>
         </div>
 
-        <!-- INVENTORY SECTION -->
         <div id="tab-inventory" class="admin-section">
             <h2>Inventory & Product Management</h2>
             <div class="card">
@@ -1046,7 +1014,6 @@ ADMIN_TEMPLATE = """
             </div>
         </div>
 
-        <!-- UPLOAD PRODUCT SECTION -->
         <div id="tab-upload" class="admin-section">
             <h2>Upload New Botanical Product</h2>
             <div class="card" style="max-width: 600px;">
@@ -1072,10 +1039,10 @@ ADMIN_TEMPLATE = """
                         </div>
                     </div>
 
-                    <label style="font-weight:600; font-size:13px;">Product Image File (Gallery / Device) *</label>
+                    <label style="font-weight:600; font-size:13px;">Product Image File *</label>
                     <input type="file" name="image_file" class="form-control" accept="image/*" required>
 
-                    <label style="font-weight:600; font-size:13px;">Product Video File (Optional - replaces image preview if uploaded)</label>
+                    <label style="font-weight:600; font-size:13px;">Product Video File (Optional)</label>
                     <input type="file" name="video_file" class="form-control" accept="video/*">
 
                     <label style="font-weight:600; font-size:13px;">Description</label>
@@ -1086,19 +1053,17 @@ ADMIN_TEMPLATE = """
             </div>
         </div>
 
-        <!-- BRANDING / LOGO SECTION -->
         <div id="tab-branding" class="admin-section">
             <h2>Website Profile Logo Management</h2>
             <div class="card" style="max-width: 500px; text-align: center;">
                 <img src="{{ settings.logo }}" alt="Current Logo" style="width: 100px; height: 100px; object-fit: cover; border-radius: 50%; border: 3px solid var(--accent-gold); margin-bottom: 20px;">
                 <form action="/api/admin/update_logo" method="POST" enctype="multipart/form-data">
-                    <label style="font-weight:600; font-size:13px; display:block; text-align:left; margin-bottom:8px;">Upload New Logo Image from Gallery</label>
+                    <label style="font-weight:600; font-size:13px; display:block; text-align:left; margin-bottom:8px;">Upload New Logo Image</label>
                     <input type="file" name="logo_file" class="form-control" accept="image/*" required>
                     <button type="submit" class="btn-submit" style="width:100%;">Update Store Logo</button>
                 </form>
             </div>
         </div>
-
     </div>
 
     <script>
@@ -1150,5 +1115,4 @@ ADMIN_TEMPLATE = """
 """
 
 if __name__ == '__main__':
-    print("Kesh Aadar Flask Server Running...")
     app.run(host='0.0.0.0', port=5000, debug=True)
