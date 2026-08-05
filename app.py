@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 import datetime
 import random
 import base64
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = 'kesh_aadar_secure_key_2026'
@@ -15,10 +16,13 @@ app.secret_key = 'kesh_aadar_secure_key_2026'
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_EMAIL = "subhraroy324@gmail.com"
-SMTP_PASS = "azkuhebmgpsrpggo"
+SMTP_PASS = "azku hebm gpsr pggo"
 
-# --- GLOBAL STORAGE ---
-SITE_LOGO = "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80"
+# --- DATABASE & STORAGE (In-memory serverless compatible) ---
+LOGO_STATE = {
+    "url": "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80",
+    "name": "Kesh Aadar"
+}
 
 PRODUCTS = [
     {
@@ -71,14 +75,14 @@ ORDERS = []
 BLACKLISTED_IPS = []
 
 # --- BACKGROUND EMAIL SENDER ---
-def send_order_email(recipient_email, name, order_id, amount, items, full_address):
+def send_order_email(recipient_email, name, order_id, amount, items, full_address, payment_type):
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f"Order Confirmed: {order_id} - KESH AADAR"
         msg['From'] = f"KESH AADAR <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
-        items_html = "".join([f"<li><b>{i['name']}</b> (Qty: {i.get('quantity', 1)}) - ₹{i['price']}</li>" for i in items])
+        items_html = "".join([f"<li><b>{i['name']}</b> (Qty: 1) - ₹{i['price']}</li>" for i in items])
         track_url = f"https://{request.host}/order_success/{order_id}" if request.host else f"http://127.0.0.1:5000/order_success/{order_id}"
 
         html_content = f"""
@@ -89,30 +93,28 @@ def send_order_email(recipient_email, name, order_id, amount, items, full_addres
                 <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">Pure Botanical Remedies</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
-                <h2 style="color: #1b4332; font-size: 22px;">Thank you for your order, {name}!</h2>
-                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your botanical order has been successfully placed and is currently being processed by our team.</p>
+                <h2 style="color: #1b4332; font-size: 20px;">Thank you for your order, {name}!</h2>
+                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your order has been placed successfully and is being prepared with care.</p>
                 
-                <div style="background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%); color: white; padding: 25px; border-radius: 15px; margin: 25px 0; text-align: center;">
-                    <p style="margin: 0; color: #d4a373; font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 2px;">Order Reference ID</p>
-                    <h3 style="margin: 8px 0; font-size: 26px; font-family: monospace; letter-spacing: 1px;">{order_id}</h3>
-                    <p style="margin: 5px 0; font-size: 15px; font-weight: 500;">Total Amount: ₹{amount}</p>
-                </div>
-
-                <div style="background: #F3EFEA; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; font-size: 13px; color: #444;">
-                    <p style="margin: 0 0 5px 0;"><b>Shipping Address:</b> {full_address}</p>
+                <div style="background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%); color: white; padding: 25px; border-radius: 14px; margin: 25px 0; text-align: center;">
+                    <p style="margin: 0; color: #d4a373; font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Order Reference ID</p>
+                    <h3 style="margin: 10px 0; font-size: 30px; font-family: monospace; letter-spacing: 2px;">{order_id}</h3>
+                    <p style="margin: 5px 0; font-size: 15px; font-weight: 500;">Total Amount: ₹{amount} ({payment_type})</p>
                 </div>
 
                 <h4 style="color: #1b4332; margin-bottom: 10px; font-size: 15px;">Items Ordered:</h4>
-                <ul style="font-size: 14px; color: #444; padding-left: 20px; line-height: 1.8;">
+                <ul style="font-size: 14px; color: #444; padding-left: 20px; line-height: 1.8; margin-bottom: 25px;">
                     {items_html}
                 </ul>
 
+                <p style="font-size: 13px; color: #555; margin-bottom: 8px;"><b>Shipping Address:</b> {full_address}</p>
+
                 <div style="text-align: center; margin-top: 35px;">
-                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 35px; border-radius: 30px; font-weight: bold; font-size: 14px; display: inline-block; box-shadow: 0 6px 20px rgba(27, 67, 50, 0.3);">Track Live Order Status</a>
+                    <a href="{track_url}" style="background: #d4a373; color: #1b4332; text-decoration: none; padding: 14px 35px; border-radius: 30px; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 5px 15px rgba(212, 163, 115, 0.4);">Click Here to Track Your Order Status</a>
                 </div>
 
                 <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0 15px 0;">
-                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Contact support at subhraroy324@gmail.com or +91 9163641507</p>
+                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Contact support at {SMTP_EMAIL}</p>
             </div>
         </body>
         </html>
@@ -145,7 +147,7 @@ def check_ip_blacklist():
 @app.route('/')
 def index():
     active_products = [p for p in PRODUCTS if p.get('status', 'active') == 'active']
-    return render_template_string(TEMPLATE, products=active_products, logo=SITE_LOGO)
+    return render_template_string(TEMPLATE, products=active_products, logo=LOGO_STATE)
 
 @app.route('/place_order', methods=['POST'])
 def place_order():
@@ -154,17 +156,16 @@ def place_order():
     data['order_id'] = order_id
     data['date'] = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p")
     data['client_ip'] = request.remote_addr
-    data['status'] = "Order Placed"  # Initial status for step tracker
+    data['status_step'] = 'Order Placed' # Order Placed -> Packaging -> Shipped -> Delivered
     
-    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', 'None')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
+    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', 'N/A')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
     data['full_address'] = full_address
     
-    ORDERS.insert(0, data)
+    ORDERS.append(data)
     
-    # Send background confirmation email instantly
     email_thread = threading.Thread(
         target=send_order_email, 
-        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address)
+        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address, data.get('payment_type', 'Online Payment'))
     )
     email_thread.start()
     
@@ -173,7 +174,7 @@ def place_order():
 @app.route('/order_success/<order_id>')
 def order_success_page(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
-    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id)
+    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, logo=LOGO_STATE)
 
 @app.route('/track_order')
 def track_order():
@@ -183,58 +184,103 @@ def track_order():
             return jsonify({"found": True, "order": o})
     return jsonify({"found": False})
 
+
 # --- ADMIN PANEL ROUTES ---
 @app.route('/admin')
 def admin_panel():
-    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, logo=SITE_LOGO)
+    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, logo=LOGO_STATE, blacklisted=BLACKLISTED_IPS)
 
-@app.route('/admin/api/order/status', methods=['POST'])
-def admin_update_order_status():
+@app.route('/admin/api/update_status', methods=['POST'])
+def admin_update_status():
     data = request.get_json()
     order_id = data.get('order_id')
-    new_status = data.get('status')
+    new_status = data.get('status_step')
     for o in ORDERS:
         if o['order_id'] == order_id:
-            o['status'] = new_status
-            return jsonify({"success": True})
-    return jsonify({"success": False, "error": "Order not found"})
+            o['status_step'] = new_status
+            return jsonify({"status": "success"})
+    return jsonify({"error": "Order not found"}), 404
+
+@app.route('/admin/api/delete_order', methods=['POST'])
+def admin_delete_order():
+    global ORDERS
+    data = request.get_json()
+    order_id = data.get('order_id')
+    ORDERS = [o for o in ORDERS if o['order_id'] != order_id]
+    return jsonify({"status": "success"})
+
+@app.route('/admin/api/logo', methods=['POST'])
+def admin_update_logo():
+    global LOGO_STATE
+    if 'logo_file' in request.files:
+        file = request.files['logo_file']
+        if file and file.filename != '':
+            encoded = base64.b64encode(file.read()).decode('utf-8')
+            mime = file.mimetype or 'image/png'
+            LOGO_STATE['url'] = f"data:{mime};base64,{encoded}"
+    return jsonify({"status": "success", "logo": LOGO_STATE})
 
 @app.route('/admin/api/product/add', methods=['POST'])
 def admin_add_product():
-    data = request.get_json()
+    global PRODUCTS
+    name = request.form.get('name')
+    category = request.form.get('category', 'Skincare')
+    price = float(request.form.get('price', 0))
+    stock = int(request.form.get('stock', 10))
+    desc = request.form.get('desc', '')
+    
+    image_url = request.form.get('image_url', 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80')
+    if 'image_file' in request.files:
+        img_file = request.files['image_file']
+        if img_file and img_file.filename != '':
+            encoded = base64.b64encode(img_file.read()).decode('utf-8')
+            image_url = f"data:{img_file.mimetype or 'image/jpeg'};base64,{encoded}"
+
+    video_url = ""
+    if 'video_file' in request.files:
+        vid_file = request.files['video_file']
+        if vid_file and vid_file.filename != '':
+            encoded = base64.b64encode(vid_file.read()).decode('utf-8')
+            video_url = f"data:{vid_file.mimetype or 'video/mp4'};base64,{encoded}"
+
     new_id = max([p['id'] for p in PRODUCTS], default=0) + 1
-    new_product = {
+    new_prod = {
         "id": new_id,
-        "name": data.get('name'),
-        "category": data.get('category', 'Skincare'),
-        "price": float(data.get('price', 0)),
-        "stock": int(data.get('stock', 10)),
-        "image": data.get('image', ''),
-        "video": data.get('video', ''),
-        "desc": data.get('desc', ''),
+        "name": name,
+        "category": category,
+        "price": price,
+        "stock": stock,
+        "image": image_url,
+        "video": video_url,
+        "desc": desc,
         "status": "active"
     }
-    PRODUCTS.append(new_product)
-    return jsonify({"success": True, "products": PRODUCTS})
+    PRODUCTS.append(new_prod)
+    return redirect(url_for('admin_panel'))
 
-@app.route('/admin/api/product/update', methods=['POST'])
-def admin_update_product():
+@app.route('/admin/api/product/edit', methods=['POST'])
+def admin_edit_product():
     data = request.get_json()
     prod_id = int(data.get('id'))
     for p in PRODUCTS:
         if p['id'] == prod_id:
             p['name'] = data.get('name', p['name'])
-            p['category'] = data.get('category', p['category'])
             p['price'] = float(data.get('price', p['price']))
             p['stock'] = int(data.get('stock', p['stock']))
             p['desc'] = data.get('desc', p['desc'])
-            p['status'] = data.get('status', p['status'])
-            if data.get('image'):
-                p['image'] = data.get('image')
-            if data.get('video'):
-                p['video'] = data.get('video')
-            return jsonify({"success": True})
-    return jsonify({"success": False})
+            p['status'] = data.get('status', p.get('status', 'active'))
+            return jsonify({"status": "success"})
+    return jsonify({"error": "Product not found"}), 404
+
+@app.route('/admin/api/product/toggle_status', methods=['POST'])
+def admin_toggle_product_status():
+    data = request.get_json()
+    prod_id = int(data.get('id'))
+    for p in PRODUCTS:
+        if p['id'] == prod_id:
+            p['status'] = 'suspended' if p.get('status', 'active') == 'active' else 'active'
+            return jsonify({"status": "success", "new_status": p['status']})
+    return jsonify({"error": "Product not found"}), 404
 
 @app.route('/admin/api/product/delete', methods=['POST'])
 def admin_delete_product():
@@ -242,19 +288,10 @@ def admin_delete_product():
     data = request.get_json()
     prod_id = int(data.get('id'))
     PRODUCTS = [p for p in PRODUCTS if p['id'] != prod_id]
-    return jsonify({"success": True, "products": PRODUCTS})
-
-@app.route('/admin/api/logo', methods=['POST'])
-def admin_update_logo():
-    global SITE_LOGO
-    data = request.get_json()
-    if data.get('logo'):
-        SITE_LOGO = data.get('logo')
-        return jsonify({"success": True})
-    return jsonify({"success": False})
+    return jsonify({"status": "success"})
 
 
-# --- FRONTEND TEMPLATE (STOREFRONT) ---
+# --- TEMPLATES ---
 TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -270,43 +307,44 @@ TEMPLATE = """
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background-color: var(--cream); color: var(--text-dark); overflow-x: hidden; scroll-behavior: smooth; }
 
-        .reveal { opacity: 0; transform: translateY(35px); transition: all 0.9s cubic-bezier(0.16, 1, 0.3, 1); }
+        .reveal { opacity: 0; transform: translateY(40px); transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1); }
         .reveal.active { opacity: 1; transform: translateY(0); }
 
-        header { position: fixed; top: 0; left: 0; width: 100%; background: rgba(250, 247, 240, 0.95); backdrop-filter: blur(14px); display: flex; justify-content: space-between; align-items: center; padding: 15px 30px; z-index: 1000; box-shadow: 0 4px 25px rgba(0,0,0,0.05); }
+        header { position: fixed; top: 0; left: 0; width: 100%; background: rgba(250, 247, 240, 0.95); backdrop-filter: blur(12px); display: flex; justify-content: space-between; align-items: center; padding: 15px 30px; z-index: 1000; box-shadow: 0 4px 25px rgba(0,0,0,0.05); }
         .nav-left { display: flex; align-items: center; gap: 15px; }
-        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.2s; }
+        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.3s ease; }
         .menu-btn:hover { transform: scale(1.1); }
         .brand-container { display: flex; align-items: center; gap: 12px; cursor: pointer; }
         .logo-img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); }
         .logo { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: var(--green-primary); letter-spacing: 1px; text-transform: uppercase; }
         .logo span { color: var(--accent-gold); }
-        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: background 0.3s; }
-        .cart-icon-container:hover { background: #e5ded4; }
+        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: 0.3s; }
+        .cart-icon-container:hover { background: var(--accent-gold); color: white; }
         .cart-badge { position: absolute; top: -5px; right: -5px; background: var(--green-light); color: white; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 50%; }
 
-        /* Enhanced Sidebar Animation */
-        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
+        /* Butter-smooth Sidebar Drawer */
+        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.4s; }
         .sidebar-overlay.active { opacity: 1; visibility: visible; }
+        
         .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
         .sidebar.active { transform: translateX(380px); }
         .sidebar h3 { color: var(--green-primary); margin-bottom: 15px; font-size: 18px; }
-        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 10px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
-        .sidebar button.menu-item:hover { background: var(--cream-dark); transform: translateX(4px); }
+        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
+        .sidebar button.menu-item:hover { background: var(--cream-dark); }
         .sidebar button.menu-item i { color: var(--accent-gold); width: 20px; }
-        .sidebar button.btn-back { background: #555; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; margin-bottom: 20px; font-size: 13px; }
-        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); transition: transform 0.2s; }
+        .sidebar button.btn-back { background: #555; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
+        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); transition: transform 0.3s; }
         .close-sidebar:hover { transform: rotate(90deg); color: #c62828; }
         .sidebar input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; outline: none; }
         .sidebar button.action-btn { width: 100%; padding: 12px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: transform 0.2s; }
-        .support-card:hover { transform: translateY(-2px); }
+        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: 0.2s; }
+        .support-card:hover { transform: translateX(3px); }
 
         /* Hero */
         .hero { height: 80vh; display: flex; align-items: center; justify-content: center; text-align: center; background: radial-gradient(circle, #f3efea 0%, #faf7f0 75%); margin-top: 70px; padding: 0 20px; }
         .hero-content h1 { font-family: 'Playfair Display', serif; font-size: clamp(34px, 6vw, 54px); color: var(--green-primary); margin-bottom: 15px; }
         .btn-primary { background: var(--green-primary); color: white; padding: 14px 38px; border-radius: 35px; text-decoration: none; font-weight: 600; border: none; cursor: pointer; display: inline-block; transition: 0.3s; }
-        .btn-primary:hover { background: var(--green-light); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(27,67,50,0.2); }
+        .btn-primary:hover { background: var(--green-light); transform: translateY(-2px); }
 
         .features-banner { background: var(--green-primary); color: white; display: flex; justify-content: space-around; padding: 20px; flex-wrap: wrap; gap: 15px; }
         .feature-item { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; }
@@ -315,24 +353,23 @@ TEMPLATE = """
         .container { max-width: 1200px; margin: 0 auto; padding: 50px 20px; }
         .product-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 30px; }
         .product-card { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); transition: 0.3s; }
-        .product-card:hover { transform: translateY(-6px); box-shadow: 0 15px 35px rgba(0,0,0,0.1); }
+        .product-card:hover { transform: translateY(-5px); }
         .product-media-container { height: 230px; overflow: hidden; background: #f7f5f0; position: relative; }
         .product-media-container img, .product-media-container video { width: 100%; height: 100%; object-fit: cover; }
         .product-info { padding: 20px; }
         .price-row { display: flex; justify-content: space-between; align-items: center; margin: 15px 0; }
         .price { font-size: 22px; font-weight: 700; color: var(--green-light); }
         .btn-group { display: flex; gap: 10px; }
-        .btn-cart { flex: 1; padding: 10px; background: var(--cream-dark); color: var(--green-primary); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-        .btn-cart:hover { background: #e5ded4; }
-        .btn-buy { flex: 1; padding: 10px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+        .btn-cart { flex: 1; padding: 10px; background: var(--cream-dark); color: var(--green-primary); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+        .btn-cart:hover { background: #e5dfd3; }
+        .btn-buy { flex: 1; padding: 10px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
         .btn-buy:hover { background: var(--green-light); }
 
         .fly-item { position: fixed; z-index: 9999; width: 50px; height: 50px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); transition: all 0.8s cubic-bezier(0.2, 1, 0.3, 1); pointer-events: none; }
 
         /* Modal */
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); display: none; justify-content: center; align-items: center; z-index: 3000; padding: 15px; }
-        .modal-content { background: white; width: 100%; max-width: 520px; padding: 30px; border-radius: 20px; max-height: 90vh; overflow-y: auto; position: relative; animation: modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
-        @keyframes modalPop { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .modal-content { background: white; width: 100%; max-width: 520px; padding: 30px; border-radius: 20px; max-height: 90vh; overflow-y: auto; position: relative; }
         
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .full-width { grid-column: span 2; }
@@ -350,7 +387,7 @@ TEMPLATE = """
         .footer-grid h3 { color: var(--accent-gold); font-family: 'Playfair Display'; font-size: 20px; margin-bottom: 15px; }
         .footer-grid p { font-size: 14px; margin-bottom: 10px; color: #ddd; display: flex; align-items: center; gap: 10px; }
         .social-icons { margin-top: 15px; display: flex; gap: 15px; }
-        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; transition: background 0.2s; }
+        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; transition: 0.3s; }
         .social-icons a:hover { background: var(--accent-gold); }
         .footer-bottom { padding-top: 20px; font-size: 12px; color: #aaa; text-align: center; }
     </style>
@@ -361,7 +398,7 @@ TEMPLATE = """
         <div class="nav-left">
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
-                <img src="{{ logo }}" alt="Logo" class="logo-img" id="headerLogoImg">
+                <img src="{{ logo.url }}" alt="Logo" class="logo-img" id="headerLogoImg">
                 <div class="logo"><span>Kesh</span> Aadar</div>
             </div>
         </div>
@@ -429,11 +466,11 @@ TEMPLATE = """
         <div class="product-grid">
             {% for p in products %}
             <div class="product-card reveal" data-id="{{ p.id }}">
-                <div class="product-media-container">
+                <div class="product-media-container" id="media-{{ p.id }}">
                     {% if p.video %}
-                        <video src="{{ p.video }}" autoplay muted loop playsinline id="media-{{ p.id }}"></video>
+                    <video src="{{ p.video }}" autoplay muted loop playsinline></video>
                     {% else %}
-                        <img src="{{ p.image }}" alt="{{ p.name }}" id="media-{{ p.id }}">
+                    <img src="{{ p.image }}" alt="{{ p.name }}" id="img-{{ p.id }}">
                     {% endif %}
                 </div>
                 <div class="product-info">
@@ -511,10 +548,10 @@ TEMPLATE = """
                     <h4 style="margin: 15px 0 8px 0; font-size:14px; color:var(--green-primary);">Payment Option</h4>
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <label style="display:flex; align-items:center; gap:10px; padding:10px; border:1px solid #ddd; border-radius:8px; cursor:pointer;" onclick="updateTotal()">
-                            <input type="radio" name="pay_mode" value="online" checked> Online Payment (Razorpay)
+                            <input type="radio" name="pay_mode" value="online" checked> Online Payment
                         </label>
                         <label style="display:flex; align-items:center; gap:10px; padding:10px; border:1px solid #ddd; border-radius:8px; cursor:pointer;" onclick="updateTotal()">
-                            <input type="radio" name="pay_mode" value="cod"> Cash on Delivery (+₹99 Fee)
+                            <input type="radio" name="pay_mode" value="cod"> Cash on Delivery
                         </label>
                     </div>
 
@@ -540,7 +577,7 @@ TEMPLATE = """
             for (var i = 0; i < reveals.length; i++) {
                 var windowHeight = window.innerHeight;
                 var elementTop = reveals[i].getBoundingClientRect().top;
-                if (elementTop < windowHeight - 35) { reveals[i].classList.add("active"); }
+                if (elementTop < windowHeight - 40) { reveals[i].classList.add("active"); }
             }
         }
         window.addEventListener("scroll", revealElements);
@@ -560,11 +597,12 @@ TEMPLATE = """
             cart.push(p); 
             updateCartUI();
 
-            let mediaElem = document.getElementById('media-' + id);
-            let flyer = mediaElem.cloneNode(true);
+            let mediaContainer = document.getElementById('media-' + id);
+            let flyer = document.createElement('img');
+            flyer.src = p.image || 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80';
             flyer.className = 'fly-item';
             
-            let rect = mediaElem.getBoundingClientRect();
+            let rect = mediaContainer.getBoundingClientRect();
             flyer.style.top = rect.top + 'px';
             flyer.style.left = rect.left + 'px';
             document.body.appendChild(flyer);
@@ -665,14 +703,21 @@ TEMPLATE = """
 
         function checkSavedAddressAvailability() {
             let saved = localStorage.getItem('kesh_saved_address');
-            if(saved) { document.getElementById('useSavedAddrBtn').style.display = 'flex'; }
+            if(saved) {
+                document.getElementById('useSavedAddrBtn').style.display = 'flex';
+            }
         }
 
         function saveAddressToStorage(data) {
             localStorage.setItem('kesh_saved_address', JSON.stringify({
-                name: data.name, email: data.email, phone: data.phone,
-                pincode: data.pincode, city: data.city, state: data.state,
-                landmark: data.landmark, street: data.street
+                name: data.name,
+                email: data.email,
+                phone: data.phone,
+                pincode: data.pincode,
+                city: data.city,
+                state: data.state,
+                landmark: data.landmark,
+                street: data.street
             }));
         }
 
@@ -707,10 +752,8 @@ TEMPLATE = """
             }
 
             let amt = updateTotal();
-            let payload = { 
-                name, email, phone, pincode, city, state, landmark, street, 
-                amount: amt, payment_type: mode === 'cod' ? 'Cash on Delivery' : 'Online Payment (Paid)', items: cart 
-            };
+            let paymentTypeStr = mode === 'cod' ? 'Cash on Delivery' : 'Online Payment (Paid)';
+            let payload = { name, email, phone, pincode, city, state, landmark, street, amount: amt, payment_type: paymentTypeStr, items: cart };
 
             saveAddressToStorage(payload);
 
@@ -754,9 +797,9 @@ TEMPLATE = """
             fetch('/track_order?q=' + encodeURIComponent(q)).then(r => r.json()).then(data => {
                 let d = document.getElementById('track-result');
                 if(data.found) {
-                    d.innerHTML = `<div style="background:#e8f5e9; padding:12px; border-radius:8px; font-size:13px; margin-top:10px;"><h4 style="color:#2e7d32;">Found: ${data.order.order_id}</h4><p>Status: <b>${data.order.status}</b></p><a href="/order_success/${data.order.order_id}" style="color:var(--green-primary); font-weight:bold; display:block; margin-top:5px;">View Live Tracker &rarr;</a></div>`;
+                    window.location.href = '/order_success/' + data.order.order_id;
                 } else { 
-                    d.innerHTML = '<p style="color:red; font-size:12px; margin-top:10px;">No order matching details found.</p>'; 
+                    d.innerHTML = '<p style="color:red; font-size:12px;">No order matching details found.</p>'; 
                 }
             });
         }
@@ -765,18 +808,18 @@ TEMPLATE = """
 </html>
 """
 
-# --- ORDER SUCCESS & LIVE STEP TRACKER TEMPLATE ---
+# --- ANIMATED ORDER SUCCESS / TRACKING TEMPLATE ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Status | KESH AADAR</title>
+    <title>Order Status & Tracking | KESH AADAR</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --green-primary: #1b4332; --green-light: #2d6a4f; --cream: #FAF7F0; --accent-gold: #d4a373; }
+        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; --green-light: #2d6a4f; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background-color: var(--cream); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
@@ -786,25 +829,25 @@ SUCCESS_TEMPLATE = """
         .card { background: white; max-width: 620px; width: 100%; padding: 40px 30px; border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); text-align: center; }
         .icon-box { font-size: 45px; color: white; background: #2e7d32; border-radius: 50%; width: 85px; height: 85px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
         
-        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 30px; margin-bottom: 8px; }
-        p.subtitle { color: #666; font-size: 14px; margin-bottom: 25px; }
+        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 28px; margin-bottom: 6px; }
+        p.subtitle { color: #666; font-size: 13px; margin-bottom: 25px; }
 
-        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 12px; margin-bottom: 25px; text-align: left; }
+        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 14px; margin-bottom: 25px; text-align: left; }
         .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #444; }
 
-        /* Amazon / Flipkart Style Step Progress Bar */
-        .tracker-container { margin: 30px 0; padding: 20px 10px; background: #fdfbf7; border-radius: 12px; border: 1px solid #eae5d9; }
-        .steps-wrapper { display: flex; justify-content: space-between; position: relative; margin-bottom: 10px; }
-        .steps-wrapper::before { content: ''; position: absolute; top: 18px; left: 10%; width: 80%; height: 4px; background: #ddd; z-index: 1; }
+        /* Flipkart / Amazon Style Progress Line */
+        .tracker-container { margin: 30px 0 20px 0; padding: 10px 0; }
+        .tracker-steps { display: flex; justify-content: space-between; position: relative; max-width: 450px; margin: 0 auto; }
+        .tracker-steps::before { content: ''; position: absolute; top: 18px; left: 30px; right: 30px; height: 4px; background: #e0e0e0; z-index: 1; }
         
         .step { position: relative; z-index: 2; text-align: center; flex: 1; }
-        .step-icon { width: 38px; height: 38px; background: #ddd; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; font-size: 14px; transition: 0.4s; }
-        .step.active .step-icon { background: var(--green-primary); box-shadow: 0 0 12px rgba(27, 67, 50, 0.4); }
-        .step.completed .step-icon { background: #2e7d32; }
+        .step-icon { width: 40px; height: 40px; border-radius: 50%; background: #e0e0e0; color: #777; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; font-size: 14px; font-weight: bold; transition: 0.3s; }
+        .step.completed .step-icon { background: var(--green-primary); color: white; box-shadow: 0 0 10px rgba(27, 67, 50, 0.3); }
+        .step.active .step-icon { background: var(--accent-gold); color: white; box-shadow: 0 0 12px rgba(212, 163, 115, 0.6); transform: scale(1.1); }
         .step-label { font-size: 11px; font-weight: 600; color: #666; }
-        .step.active .step-label { color: var(--green-primary); font-weight: 700; }
+        .step.completed .step-label, .step.active .step-label { color: var(--green-primary); }
 
-        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: background 0.2s; }
+        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: 0.3s; }
         .btn-home:hover { background: var(--green-light); }
     </style>
 </head>
@@ -812,67 +855,65 @@ SUCCESS_TEMPLATE = """
 
     <div class="card">
         <div class="icon-box"><i class="fa-solid fa-check"></i></div>
-        <h1>Order Confirmed!</h1>
-        <p class="subtitle">Thank you for choosing Kesh Aadar. Here is your live order status.</p>
+        <h1>Order Tracking & Details</h1>
+        <p class="subtitle">Live status updates for your Kesh Aadar botanical shipment</p>
 
         {% if order %}
         <div class="order-info-box">
             <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:15px; color:var(--green-primary);">{{ order.order_id }}</b></div>
-            <div class="info-row"><span>Order Date:</span><b>{{ order.date }}</b></div>
             <div class="info-row"><span>Customer Name:</span><b>{{ order.name }}</b></div>
-            <div class="info-row"><span>Phone / Email:</span><b>{{ order.phone }} | {{ order.email }}</b></div>
+            <div class="info-row"><span>Email / Phone:</span><b>{{ order.email }} | {{ order.phone }}</b></div>
             <div class="info-row"><span>Payment Status:</span><b style="color:#2e7d32;">{{ order.payment_type }}</b></div>
             <div class="info-row"><span>Shipping Address:</span><span style="max-width: 260px; text-align: right;">{{ order.full_address }}</span></div>
-            <div class="info-row" style="margin-top: 10px; border-top: 1px solid #ddd; padding-top: 8px;"><span>Total Bill (with GST):</span><b style="font-size: 15px; color: var(--green-primary);">₹{{ order.amount }}</b></div>
+            <hr style="border: 0; border-top: 1px solid #ddd; margin: 12px 0;">
+            <div class="info-row"><span>Ordered Items:</span></div>
+            <ul style="padding-left: 20px; font-size: 12px; color: #555; margin-bottom: 8px;">
+                {% for item in order.items %}
+                <li>{{ item.name }} - ₹{{ item.price }}</li>
+                {% endfor %}
+            </ul>
+            <div class="info-row" style="font-weight: bold; font-size: 14px; color: var(--green-primary); border-top: 1px dashed #d4a373; padding-top: 8px;">
+                <span>Total Bill (incl. taxes/fees):</span><span>₹{{ order.amount }}</span>
+            </div>
         </div>
 
-        <!-- Step Tracker Bar -->
+        {% set current_step = order.status_step %}
         <div class="tracker-container">
-            <h4 style="font-size: 14px; color: var(--green-primary); margin-bottom: 15px; text-align: left;"><i class="fa-solid fa-truck-fast"></i> Live Delivery Progress</h4>
-            
-            {% set status = order.status %}
-            {% set s1 = 'completed' if status in ['Packaging', 'Shipped', 'Delivered'] else ('active' if status == 'Order Placed' else '') %}
-            {% set s2 = 'completed' if status in ['Shipped', 'Delivered'] else ('active' if status == 'Packaging' else '') %}
-            {% set s3 = 'completed' if status == 'Delivered' else ('active' if status == 'Shipped' else '') %}
-            {% set s4 = 'active completed' if status == 'Delivered' else '' %}
-
-            <div class="steps-wrapper">
-                <div class="step {{ s1 }}">
-                    <div class="step-icon"><i class="fa-solid fa-clipboard-check"></i></div>
-                    <div class="step-label">Order Placed</div>
+            <h4 style="font-size: 14px; color: var(--green-primary); margin-bottom: 15px;">Delivery Progress</h4>
+            <div class="tracker-steps">
+                <div class="step {% if current_step in ['Order Placed', 'Packaging', 'Shipped', 'Delivered'] %}completed{% endif %}">
+                    <div class="step-icon"><i class="fa-solid fa-file-invoice"></i></div>
+                    <div class="step-label">Placed</div>
                 </div>
-                <div class="step {{ s2 }}">
+                <div class="step {% if current_step in ['Packaging', 'Shipped', 'Delivered'] %}completed{% elif current_step == 'Packaging' %}active{% endif %}">
                     <div class="step-icon"><i class="fa-solid fa-box-open"></i></div>
                     <div class="step-label">Packaging</div>
                 </div>
-                <div class="step {{ s3 }}">
-                    <div class="step-icon"><i class="fa-solid fa-truck"></i></div>
+                <div class="step {% if current_step in ['Shipped', 'Delivered'] %}completed{% elif current_step == 'Shipped' %}active{% endif %}">
+                    <div class="step-icon"><i class="fa-solid fa-truck-fast"></i></div>
                     <div class="step-label">Shipped</div>
                 </div>
-                <div class="step {{ s4 }}">
+                <div class="step {% if current_step == 'Delivered' %}completed active{% endif %}">
                     <div class="step-icon"><i class="fa-solid fa-house-chimney"></i></div>
                     <div class="step-label">Delivered</div>
                 </div>
             </div>
         </div>
-
         {% else %}
-        <div class="order-info-box">
-            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order_id }}</b></div>
-            <p style="color: red; font-size: 12px; margin-top: 10px;">Order details are refreshing or not found in local memory session.</p>
+        <div class="order-info-box" style="text-align: center;">
+            <p style="color: #c62828;">Order reference not found or expired.</p>
+            <b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order_id }}</b>
         </div>
         {% endif %}
 
-        <p style="font-size: 12px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> An official invoice & tracking link has been emailed to you.</p>
-        
-        <a href="/" class="btn-home">Continue Shopping</a>
+        <a href="/" class="btn-home" style="margin-top: 15px;">Return to Storefront</a>
     </div>
 
 </body>
 </html>
 """
 
-# --- ADMIN PANEL TEMPLATE (/admin) ---
+# --- ADMIN PANEL TEMPLATE ---
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -880,39 +921,40 @@ ADMIN_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | KESH AADAR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; }
+        :root { --green-primary: #1b4332; --cream: #FAF7F0; --cream-dark: #F3EFEA; --accent-gold: #d4a373; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
-        body { background-color: var(--cream); color: #333; display: flex; min-height: 100vh; }
+        body { background-color: var(--cream); display: flex; min-height: 100vh; color: #333; }
 
         /* Admin Sidebar */
-        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 30px 20px; display: flex; flex-direction: column; justify-content: space-between; position: fixed; height: 100%; transition: transform 0.3s; z-index: 100; }
-        .admin-sidebar h2 { font-size: 20px; color: var(--accent-gold); margin-bottom: 30px; letter-spacing: 1px; }
-        .admin-nav { display: flex; flex-direction: column; gap: 10px; }
-        .admin-nav-btn { background: none; border: none; color: #ddd; padding: 12px 15px; border-radius: 8px; text-align: left; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
-        .admin-nav-btn:hover, .admin-nav-btn.active { background: rgba(255,255,255,0.1); color: white; font-weight: 600; }
+        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 30px 20px; display: flex; flex-direction: column; justify-content: space-between; position: fixed; height: 100%; left: 0; top: 0; z-index: 100; transition: transform 0.4s ease; }
+        .admin-logo { font-size: 20px; font-weight: 700; color: var(--accent-gold); margin-bottom: 30px; display: flex; align-items: center; justify-content: space-between; }
+        .admin-nav { display: flex; flex-direction: column; gap: 10px; flex: 1; }
+        .admin-nav button { background: none; border: none; color: white; padding: 12px 15px; text-align: left; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 14px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
+        .admin-nav button:hover, .admin-nav button.active { background: rgba(255,255,255,0.1); color: var(--accent-gold); }
 
         /* Main Content */
-        .admin-main { margin-left: 260px; flex: 1; padding: 40px; }
-        .admin-section { display: none; }
-        .admin-section.active { display: block; }
+        .admin-main { margin-left: 260px; flex: 1; padding: 40px; overflow-y: auto; }
+        .tab-section { display: none; }
+        .tab-section.active { display: block; }
 
-        h2.sec-title { color: var(--green-primary); margin-bottom: 25px; font-size: 24px; }
+        h2 { color: var(--green-primary); margin-bottom: 25px; font-size: 24px; }
         .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); margin-bottom: 25px; }
         
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
         th { background: #f8f9fa; color: var(--green-primary); font-weight: 600; }
 
-        .form-control { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; outline: none; }
+        .form-control { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 13px; }
         .btn { background: var(--green-primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
-        .btn:hover { background: #2d6a4f; }
         .btn-danger { background: #c62828; }
-        .btn-danger:hover { background: #b71c1c; }
-
-        .status-select { padding: 6px 10px; border-radius: 6px; border: 1px solid #ccc; font-size: 12px; font-weight: 600; outline: none; }
+        .btn-warning { background: #e65100; }
+        
+        .badge { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+        .badge-active { background: #e8f5e9; color: #2e7d32; }
+        .badge-suspended { background: #ffebee; color: #c62828; }
     </style>
 </head>
 <body>
@@ -920,148 +962,134 @@ ADMIN_TEMPLATE = """
     <!-- Admin Sidebar -->
     <div class="admin-sidebar" id="adminSidebar">
         <div>
-            <h2>KESH AADAR ADMIN</h2>
+            <div class="admin-logo">
+                <span>KESH ADMIN</span>
+                <i class="fa-solid fa-xmark" style="cursor:pointer;" onclick="toggleAdminSidebar()"></i>
+            </div>
             <div class="admin-nav">
-                <button class="admin-nav-btn active" onclick="switchTab('orders', this)"><i class="fa-solid fa-shopping-cart"></i> Orders Management</button>
-                <button class="admin-nav-btn" onclick="switchTab('products', this)"><i class="fa-solid fa-boxes-stacked"></i> Products Inventory</button>
-                <button class="admin-nav-btn" onclick="switchTab('logo', this)"><i class="fa-solid fa-image"></i> Website Logo</button>
-                <a href="/" target="_blank" class="admin-nav-btn" style="text-decoration:none;"><i class="fa-solid fa-globe"></i> Visit Storefront</a>
+                <button class="active" onclick="switchTab('orders', this)"><i class="fa-solid fa-box"></i> Customer Orders</button>
+                <button onclick="switchTab('products', this)"><i class="fa-solid fa-tags"></i> Product Management</button>
+                <button onclick="switchTab('logo', this)"><i class="fa-solid fa-image"></i> Website Logo</button>
+                <button onclick="window.location.href='/'"><i class="fa-solid fa-store"></i> View Storefront</button>
             </div>
         </div>
-        <p style="font-size: 11px; color: #aaa;">Secure Admin Panel v2.6</p>
+        <div style="font-size: 11px; color: #aaa; text-align: center;">Secure Admin Panel v2.6</div>
     </div>
 
-    <!-- Admin Main Content Area -->
+    <!-- Main Dashboard Area -->
     <div class="admin-main">
         
+        <!-- Top bar with toggle button if closed -->
+        <div style="margin-bottom: 20px;">
+            <button class="btn" onclick="toggleAdminSidebar()" style="background: var(--green-primary);"><i class="fa-solid fa-bars"></i> Toggle Menu</button>
+        </div>
+
         <!-- ORDERS TAB -->
-        <div class="admin-section active" id="tab-orders">
-            <h2 class="sec-title">Customer Orders Management</h2>
+        <div id="tab-orders" class="tab-section active">
+            <h2>Customer Orders Management</h2>
             <div class="card">
-                {% if orders %}
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
                             <tr>
                                 <th>Order ID & Date</th>
                                 <th>Customer Details</th>
-                                <th>Delivery Address</th>
                                 <th>Items & Amount</th>
+                                <th>Shipping Address</th>
                                 <th>Status Control</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for o in orders %}
-                            <tr>
-                                <td>
-                                    <b style="font-family:monospace; color:var(--green-primary);">{{ o.order_id }}</b><br>
-                                    <span style="font-size:11px; color:#666;">{{ o.date }}</span><br>
-                                    <span style="font-size:11px; background:#e8f5e9; color:#2e7d32; padding:2px 6px; border-radius:4px; font-weight:600;">{{ o.payment_type }}</span>
-                                </td>
-                                <td>
-                                    <b>{{ o.name }}</b><br>
-                                    <i class="fa-solid fa-phone" style="font-size:10px;"></i> {{ o.phone }}<br>
-                                    <i class="fa-solid fa-envelope" style="font-size:10px;"></i> {{ o.email }}
-                                </td>
-                                <td style="max-width: 240px; font-size:12px;">
-                                    {{ o.full_address }}
-                                </td>
-                                <td>
-                                    <ul style="padding-left:15px; font-size:12px; margin-bottom:5px;">
-                                        {% for item in o.items %}
-                                        <li>{{ item.name }} (₹{{ item.price }})</li>
-                                        {% endfor %}
-                                    </ul>
-                                    <b>Total: ₹{{ o.amount }}</b>
-                                </td>
-                                <td>
-                                    <select class="status-select" onchange="updateOrderStatus('{{ o.order_id }}', this.value)">
-                                        <option value="Order Placed" {% if o.status == 'Order Placed' %}selected{% endif %}>Order Placed</option>
-                                        <option value="Packaging" {% if o.status == 'Packaging' %}selected{% endif %}>Packaging</option>
-                                        <option value="Shipped" {% if o.status == 'Shipped' %}selected{% endif %}>Shipped</option>
-                                        <option value="Delivered" {% if o.status == 'Delivered' %}selected{% endif %}>Delivered</option>
-                                    </select>
-                                </td>
-                            </tr>
-                            {% endfor %}
+                            {% if orders %}
+                                {% for o in orders %}
+                                <tr>
+                                    <td><b>{{ o.order_id }}</b><br><span style="font-size:11px; color:#666;">{{ o.date }}</span></td>
+                                    <td><b>{{ o.name }}</b><br>{{ o.phone }}<br>{{ o.email }}</td>
+                                    <td>₹<b>{{ o.amount }}</b> ({{ o.payment_type }})<br><span style="font-size:11px; color:#555;">{{ o.items | length }} items</span></td>
+                                    <td style="font-size:12px; max-width:200px;">{{ o.full_address }}</td>
+                                    <td>
+                                        <select class="form-control" style="margin:0; width:140px; font-size:12px;" onchange="updateOrderStatus('{{ o.order_id }}', this.value)">
+                                            <option value="Order Placed" {% if o.status_step == 'Order Placed' %}selected{% endif %}>Order Placed</option>
+                                            <option value="Packaging" {% if o.status_step == 'Packaging' %}selected{% endif %}>Packaging</option>
+                                            <option value="Shipped" {% if o.status_step == 'Shipped' %}selected{% endif %}>Shipped</option>
+                                            <option value="Delivered" {% if o.status_step == 'Delivered' %}selected{% endif %}>Delivered</option>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-danger" style="padding:6px 10px; font-size:11px;" onclick="deleteOrder('{{ o.order_id }}')"><i class="fa-solid fa-trash"></i></button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr><td colspan="6" style="text-align:center; color:#888; padding:30px;">No orders placed yet.</td></tr>
+                            {% endif %}
                         </tbody>
                     </table>
                 </div>
-                {% else %}
-                <p style="color:#666; font-size:14px; text-align:center; padding:20px;">No customer orders received yet.</p>
-                {% endif %}
             </div>
         </div>
 
-        <!-- PRODUCTS / INVENTORY TAB -->
-        <div class="admin-section" id="tab-products">
-            <h2 class="sec-title">Product Inventory & Upload</h2>
+        <!-- PRODUCTS TAB -->
+        <div id="tab-products" class="tab-section">
+            <h2>Product & Inventory Management</h2>
             
             <div class="card">
-                <h3 style="font-size: 16px; color: var(--green-primary); margin-bottom: 15px;">Add New Botanical Product</h3>
-                <form onsubmit="event.preventDefault(); addProduct();">
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                        <input type="text" id="new-prod-name" class="form-control" placeholder="Product Name *" required>
-                        <input type="text" id="new-prod-category" class="form-control" placeholder="Category (e.g. Skincare, Haircare)" required>
-                        <input type="number" id="new-prod-price" class="form-control" placeholder="Price (₹) *" required>
-                        <input type="number" id="new-prod-stock" class="form-control" placeholder="Stock Quantity *" required>
+                <h3 style="font-size:16px; color:var(--green-primary); margin-bottom:15px;"><i class="fa-solid fa-plus-circle"></i> Add New Botanical Product</h3>
+                <form action="/admin/api/product/add" method="POST" enctype="multipart/form-data">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                        <input type="text" name="name" class="form-control" placeholder="Product Name *" required>
+                        <input type="text" name="category" class="form-control" placeholder="Category (e.g., Skincare) *" required>
+                        <input type="number" name="price" class="form-control" placeholder="Price (INR) *" required>
+                        <input type="number" name="stock" class="form-control" placeholder="Stock Quantity *" required>
                     </div>
-                    <textarea id="new-prod-desc" class="form-control" placeholder="Product Description *" rows="2" required></textarea>
+                    <textarea name="desc" class="form-control" placeholder="Product Description *" rows="2" required></textarea>
                     
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:10px; font-size:13px;">
                         <div>
-                            <label style="font-size:12px; font-weight:600; color:#555;">Upload Product Image (Gallery File):</label>
-                            <input type="file" id="new-prod-img-file" class="form-control" accept="image/*" onchange="encodeFile(this, 'new-prod-img-base64')">
-                            <input type="hidden" id="new-prod-img-base64">
+                            <label style="display:block; font-weight:600; margin-bottom:5px;">Product Image File (Gallery):</label>
+                            <input type="file" name="image_file" accept="image/*" class="form-control">
                         </div>
                         <div>
-                            <label style="font-size:12px; font-weight:600; color:#555;">Upload Product Video (Optional):</label>
-                            <input type="file" id="new-prod-vid-file" class="form-control" accept="video/*" onchange="encodeFile(this, 'new-prod-vid-base64')">
-                            <input type="hidden" id="new-prod-vid-base64">
+                            <label style="display:block; font-weight:600; margin-bottom:5px;">Product Video File (Optional):</label>
+                            <input type="file" name="video_file" accept="video/*" class="form-control">
                         </div>
                     </div>
-                    <button type="submit" class="btn"><i class="fa-solid fa-plus"></i> Publish Product</button>
+                    <button type="submit" class="btn">Upload Product</button>
                 </form>
             </div>
 
             <div class="card">
-                <h3 style="font-size: 16px; color: var(--green-primary); margin-bottom: 15px;">Existing Formulations Inventory</h3>
+                <h3 style="font-size:16px; color:var(--green-primary); margin-bottom:15px;">Existing Inventory</h3>
                 <table>
                     <thead>
                         <tr>
                             <th>Preview</th>
                             <th>Name & Category</th>
                             <th>Price & Stock</th>
-                            <th>Status (Live / Suspended)</th>
+                            <th>Status</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="inventory-table-body">
+                    <tbody>
                         {% for p in products %}
-                        <tr id="prod-row-{{ p.id }}">
+                        <tr>
                             <td>
-                                {% if p.video %}
-                                    <video src="{{ p.video }}" style="width:45px; height:45px; object-fit:cover; border-radius:6px;" muted autoplay loop></video>
+                                <img src="{{ p.image }}" style="width:45px; height:45px; object-fit:cover; border-radius:6px;">
+                            </td>
+                            <td><b>{{ p.name }}</b><br><span style="font-size:11px; color:#666;">{{ p.category }}</span></td>
+                            <td>₹<input type="number" id="price-{{ p.id }}" value="{{ p.price }}" style="width:70px; padding:4px;" /> | Stock: <input type="number" id="stock-{{ p.id }}" value="{{ p.stock }}" style="width:50px; padding:4px;" /></td>
+                            <td>
+                                {% if p.status == 'suspended' %}
+                                <span class="badge badge-suspended">Suspended</span>
                                 {% else %}
-                                    <img src="{{ p.image }}" style="width:45px; height:45px; object-fit:cover; border-radius:6px;">
+                                <span class="badge badge-active">Live</span>
                                 {% endif %}
                             </td>
                             <td>
-                                <b>{{ p.name }}</b><br><span style="font-size:11px; color:#666;">{{ p.category }}</span>
-                            </td>
-                            <td>
-                                ₹<input type="number" id="edit-price-{{ p.id }}" value="{{ p.price }}" style="width:70px; padding:4px;"> | 
-                                Qty:<input type="number" id="edit-stock-{{ p.id }}" value="{{ p.stock }}" style="width:50px; padding:4px;">
-                            </td>
-                            <td>
-                                <select id="edit-status-{{ p.id }}" class="status-select">
-                                    <option value="active" {% if p.status == 'active' %}selected{% endif %}>Active (Live)</option>
-                                    <option value="suspended" {% if p.status == 'suspended' %}selected{% endif %}>Suspended (Hidden)</option>
-                                </select>
-                            </td>
-                            <td>
-                                <button class="btn" onclick="updateProduct({{ p.id }})" style="padding:6px 12px; font-size:11px;"><i class="fa-solid fa-save"></i> Save</button>
-                                <button class="btn btn-danger" onclick="deleteProduct({{ p.id }})" style="padding:6px 12px; font-size:11px;"><i class="fa-solid fa-trash"></i></button>
+                                <button class="btn" style="padding:6px 10px; font-size:11px;" onclick="saveProduct({{ p.id }})">Save</button>
+                                <button class="btn btn-warning" style="padding:6px 10px; font-size:11px;" onclick="toggleProductStatus({{ p.id }})">Toggle</button>
+                                <button class="btn btn-danger" style="padding:6px 10px; font-size:11px;" onclick="deleteProduct({{ p.id }})"><i class="fa-solid fa-trash"></i></button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -1070,116 +1098,100 @@ ADMIN_TEMPLATE = """
             </div>
         </div>
 
-        <!-- LOGO MANAGEMENT TAB -->
-        <div class="admin-section" id="tab-logo">
-            <h2 class="sec-title">Website Profile Logo Customization</h2>
+        <!-- LOGO TAB -->
+        <div id="tab-logo" class="tab-section">
+            <h2>Website Logo & Branding</h2>
             <div class="card" style="max-width: 500px;">
-                <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Upload a new image file from your device to instantly update the storefront header logo.</p>
                 <div style="text-align: center; margin-bottom: 20px;">
-                    <img src="{{ logo }}" alt="Current Logo" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid var(--accent-gold); object-fit: cover;" id="currentLogoPreview">
+                    <img src="{{ logo.url }}" style="width: 90px; height: 90px; object-fit: cover; border-radius: 50%; border: 3px solid var(--accent-gold);">
+                    <p style="margin-top: 10px; font-size: 13px; color: #666;">Current Storefront Logo</p>
                 </div>
-                <input type="file" id="logo-file-input" class="form-control" accept="image/*" onchange="encodeFile(this, 'logo-base64')">
-                <input type="hidden" id="logo-base64">
-                <button type="button" class="btn" onclick="updateLogo()" style="width: 100%; margin-top: 10px;">Update Website Logo</button>
+                <form id="logoForm" onsubmit="event.preventDefault(); uploadLogo();">
+                    <label style="display:block; font-weight:600; margin-bottom:8px; font-size:13px;">Upload New Logo from Gallery:</label>
+                    <input type="file" id="logoFileInput" accept="image/*" class="form-control" required>
+                    <button type="submit" class="btn" style="width:100%; margin-top:10px;">Update Website Logo</button>
+                </form>
             </div>
         </div>
 
     </div>
 
     <script>
+        function toggleAdminSidebar() {
+            let sb = document.getElementById('adminSidebar');
+            sb.style.transform = sb.style.transform === 'translateX(-260px)' ? 'translateX(0)' : 'translateX(-260px)';
+        }
+
         function switchTab(tabId, btn) {
-            document.querySelectorAll('.admin-section').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.admin-nav-btn').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.admin-nav button').forEach(b => b.classList.remove('active'));
             document.getElementById('tab-' + tabId).classList.add('active');
             btn.classList.add('active');
         }
 
-        function encodeFile(input, targetId) {
-            let file = input.files[0];
-            if(file) {
-                let reader = new FileReader();
-                reader.onload = function(e) {
-                    document.getElementById(targetId).value = e.target.result;
-                };
-                reader.readAsDataURL(file);
+        function updateOrderStatus(order_id, status_step) {
+            fetch('/admin/api/update_status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order_id, status_step })
+            }).then(r => r.json()).then(res => {
+                if(res.status === 'success') {
+                    alert('Order status successfully updated to: ' + status_step);
+                }
+            });
+        }
+
+        function deleteOrder(order_id) {
+            if(confirm('Are you sure you want to delete order ' + order_id + '?')) {
+                fetch('/admin/api/delete_order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ order_id })
+                }).then(() => location.reload());
             }
         }
 
-        function updateOrderStatus(order_id, status) {
-            fetch('/admin/api/order/status', {
+        function saveProduct(id) {
+            let price = document.getElementById('price-' + id).value;
+            let stock = document.getElementById('stock-' + id).value;
+            fetch('/admin/api/product/edit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ order_id, status })
-            }).then(r => r.json()).then(res => {
-                if(res.success) {
-                    console.log("Status updated successfully.");
-                }
-            });
+                body: JSON.stringify({ id, price, stock })
+            }).then(() => alert('Product updated successfully!'));
         }
 
-        function addProduct() {
-            let name = document.getElementById('new-prod-name').value;
-            let category = document.getElementById('new-prod-category').value;
-            let price = document.getElementById('new-prod-price').value;
-            let stock = document.getElementById('new-prod-stock').value;
-            let desc = document.getElementById('new-prod-desc').value;
-            let image = document.getElementById('new-prod-img-base64').value || 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80';
-            let video = document.getElementById('new-prod-vid-base64').value;
-
-            fetch('/admin/api/product/add', {
+        function toggleProductStatus(id) {
+            fetch('/admin/api/product/toggle_status', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, category, price, stock, desc, image, video })
-            }).then(r => r.json()).then(res => {
-                if(res.success) {
-                    alert('Product published successfully!');
-                    location.reload();
-                }
-            });
-        }
-
-        function updateProduct(id) {
-            let price = document.getElementById('edit-price-' + id).value;
-            let stock = document.getElementById('edit-stock-' + id).value;
-            let status = document.getElementById('edit-status-' + id).value;
-
-            fetch('/admin/api/product/update', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, price, stock, status })
-            }).then(r => r.json()).then(res => {
-                if(res.success) {
-                    alert('Product inventory updated!');
-                }
-            });
+                body: JSON.stringify({ id })
+            }).then(() => location.reload());
         }
 
         function deleteProduct(id) {
-            if(confirm('Are you sure you want to delete this product?')) {
+            if(confirm('Permanently delete this product?')) {
                 fetch('/admin/api/product/delete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id })
-                }).then(r => r.json()).then(res => {
-                    if(res.success) {
-                        document.getElementById('prod-row-' + id).remove();
-                    }
-                });
+                }).then(() => location.reload());
             }
         }
 
-        function updateLogo() {
-            let logo = document.getElementById('logo-base64').value;
-            if(!logo) return alert('Please select an image file first.');
+        function uploadLogo() {
+            let fileInput = document.getElementById('logoFileInput');
+            if(fileInput.files.length === 0) return alert('Please select an image file.');
+            let formData = new FormData();
+            formData.append('logo_file', fileInput.files[0]);
 
             fetch('/admin/api/logo', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ logo })
+                body: formData
             }).then(r => r.json()).then(res => {
-                if(res.success) {
+                if(res.status === 'success') {
                     alert('Website logo updated successfully!');
-                    document.getElementById('currentLogoPreview').src = logo;
+                    location.reload();
                 }
             });
         }
