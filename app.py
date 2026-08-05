@@ -1,12 +1,12 @@
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 import json
-import os
 import smtplib
 import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import datetime
 import random
+import base64
 
 app = Flask(__name__)
 app.secret_key = 'kesh_aadar_secure_key_2026'
@@ -17,96 +17,102 @@ SMTP_PORT = 587
 SMTP_EMAIL = "subhraroy324@gmail.com"
 SMTP_PASS = "idxv jjob guit vtfb"
 
-# --- PERSISTENT STORAGE FOR VERCEL (/tmp) ---
-DATA_DIR = "/tmp"
-PRODUCTS_FILE = os.path.join(DATA_DIR, "products.json")
-ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
-CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+# --- GLOBAL STORAGE ---
+SITE_LOGO = "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80"
 
-DEFAULT_PRODUCTS = [
-    {"id": 1, "name": "Aloe Neem Glow Face Wash", "category": "Skincare", "price": 349, "stock": 50, "image": "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80", "desc": "Deep cleansing herbal formula for radiant skin.", "status": "active"},
-    {"id": 2, "name": "Saffron Kumkumadi Night Serum", "category": "Skincare", "price": 799, "stock": 30, "image": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=500&q=80", "desc": "Fades blemishes and restores natural skin glow.", "status": "active"},
-    {"id": 3, "name": "Bhringraj Onion Hair Growth Oil", "category": "Haircare", "price": 499, "stock": 40, "image": "https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?auto=format&fit=crop&w=500&q=80", "desc": "Stops hair fall and stimulates roots naturally.", "status": "active"},
-    {"id": 4, "name": "Hibiscus & Shikakai Herbal Shampoo", "category": "Haircare", "price": 399, "stock": 45, "image": "https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=500&q=80", "desc": "Nourishing sulfate-free cleanser for smooth hair.", "status": "active"}
+PRODUCTS = [
+    {
+        "id": 1, 
+        "name": "Aloe Neem Glow Face Wash", 
+        "category": "Skincare", 
+        "price": 349, 
+        "stock": 50, 
+        "image": "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80", 
+        "video": "",
+        "desc": "Deep cleansing herbal formula for radiant skin.",
+        "status": "active"
+    },
+    {
+        "id": 2, 
+        "name": "Saffron Kumkumadi Night Serum", 
+        "category": "Skincare", 
+        "price": 799, 
+        "stock": 30, 
+        "image": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=500&q=80", 
+        "video": "",
+        "desc": "Fades blemishes and restores natural skin glow.",
+        "status": "active"
+    },
+    {
+        "id": 3, 
+        "name": "Bhringraj Onion Hair Growth Oil", 
+        "category": "Haircare", 
+        "price": 499, 
+        "stock": 40, 
+        "image": "https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?auto=format&fit=crop&w=500&q=80", 
+        "video": "",
+        "desc": "Stops hair fall and stimulates roots naturally.",
+        "status": "active"
+    },
+    {
+        "id": 4, 
+        "name": "Hibiscus & Shikakai Herbal Shampoo", 
+        "category": "Haircare", 
+        "price": 399, 
+        "stock": 45, 
+        "image": "https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=500&q=80", 
+        "video": "",
+        "desc": "Nourishing sulfate-free cleanser for smooth hair.",
+        "status": "active"
+    }
 ]
 
-def load_json(filepath, default):
-    try:
-        if os.path.exists(filepath):
-            with open(filepath, 'r') as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return default
-
-def save_json(filepath, data):
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        print(f"Error saving data: {e}")
-
-def get_products():
-    return load_json(PRODUCTS_FILE, DEFAULT_PRODUCTS)
-
-def save_products(prods):
-    save_json(PRODUCTS_FILE, prods)
-
-def get_orders():
-    return load_json(ORDERS_FILE, [])
-
-def save_orders(ords):
-    save_json(ORDERS_FILE, ords)
-
-def get_config():
-    return load_json(CONFIG_FILE, {"logo": "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=150&q=80"})
-
-def save_config(cfg):
-    save_json(CONFIG_FILE, cfg)
-
+ORDERS = []
 BLACKLISTED_IPS = []
 
 # --- BACKGROUND EMAIL SENDER ---
-def send_order_email(recipient_email, name, order_id, amount, items, full_address, payment_type):
+def send_order_email(recipient_email, name, order_id, amount, items, full_address):
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f"Order Confirmed: {order_id} - KESH AADAR"
         msg['From'] = f"KESH AADAR <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
-        items_html = "".join([f"<li style='margin-bottom: 8px;'><b>{i['name']}</b> (₹{i['price']})</li>" for i in items])
-        track_url = f"https://kesh-aadar.vercel.app/order_success/{order_id}"
+        items_html = "".join([f"<li><b>{i['name']}</b> (Qty: {i.get('quantity', 1)}) - ₹{i['price']}</li>" for i in items])
+        track_url = f"https://{request.host}/order_success/{order_id}" if request.host else f"http://127.0.0.1:5000/order_success/{order_id}"
 
         html_content = f"""
         <html>
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
-            <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 15px 35px rgba(27,67,50,0.08); text-align: left;">
-                <h1 style="font-size: 32px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center; font-family: 'Playfair Display', serif;">KESH AADAR</h1>
+            <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); text-align: left;">
+                <h1 style="font-size: 32px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">KESH AADAR</h1>
                 <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">Pure Botanical Remedies</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
                 <h2 style="color: #1b4332; font-size: 22px;">Thank you for your order, {name}!</h2>
-                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your order has been placed successfully and is currently being prepared for dispatch.</p>
+                <p style="font-size: 14px; color: #555; line-height: 1.6;">Your botanical order has been successfully placed and is currently being processed by our team.</p>
                 
-                <div style="background: linear-gradient(135deg, #FAF7F0 0%, #F3EFEA 100%); padding: 25px; border-radius: 14px; margin: 25px 0; border: 1px dashed #d4a373;">
-                    <p style="margin: 0; color: #666; font-size: 11px; text-transform: uppercase; font-weight: bold;">Order Reference ID</p>
-                    <h3 style="margin: 8px 0; font-size: 26px; color: #1b4332; font-family: monospace;">{order_id}</h3>
-                    <p style="margin: 8px 0 4px 0; color: #333; font-size: 14px; font-weight: 600;">Total Bill: ₹{amount} ({payment_type})</p>
-                    <p style="margin: 4px 0 0 0; color: #555; font-size: 13px;"><b>Shipping Address:</b> {full_address}</p>
+                <div style="background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%); color: white; padding: 25px; border-radius: 15px; margin: 25px 0; text-align: center;">
+                    <p style="margin: 0; color: #d4a373; font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 2px;">Order Reference ID</p>
+                    <h3 style="margin: 8px 0; font-size: 26px; font-family: monospace; letter-spacing: 1px;">{order_id}</h3>
+                    <p style="margin: 5px 0; font-size: 15px; font-weight: 500;">Total Amount: ₹{amount}</p>
+                </div>
+
+                <div style="background: #F3EFEA; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; font-size: 13px; color: #444;">
+                    <p style="margin: 0 0 5px 0;"><b>Shipping Address:</b> {full_address}</p>
                 </div>
 
                 <h4 style="color: #1b4332; margin-bottom: 10px; font-size: 15px;">Items Ordered:</h4>
-                <ul style="font-size: 13px; color: #444; padding-left: 20px; line-height: 1.7;">
+                <ul style="font-size: 14px; color: #444; padding-left: 20px; line-height: 1.8;">
                     {items_html}
                 </ul>
 
                 <div style="text-align: center; margin-top: 35px;">
-                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 32px; border-radius: 30px; font-weight: bold; font-size: 14px; display: inline-block; box-shadow: 0 6px 20px rgba(27, 67, 50, 0.3);">Track Live Order Status</a>
+                    <a href="{track_url}" style="background: #1b4332; color: white; text-decoration: none; padding: 14px 35px; border-radius: 30px; font-weight: bold; font-size: 14px; display: inline-block; box-shadow: 0 6px 20px rgba(27, 67, 50, 0.3);">Track Live Order Status</a>
                 </div>
 
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 35px 0 15px 0;">
-                <p style="font-size: 11px; color: #888; text-align: center;">Need assistance? Contact support at subhraroy324@gmail.com | +91 9163641507</p>
+                <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0 15px 0;">
+                <p style="font-size: 12px; color: #888; text-align: center;">Need assistance? Contact support at subhraroy324@gmail.com or +91 9163641507</p>
             </div>
         </body>
         </html>
@@ -138,9 +144,8 @@ def check_ip_blacklist():
 # --- PUBLIC ROUTES ---
 @app.route('/')
 def index():
-    prods = [p for p in get_products() if p.get('status', 'active') == 'active']
-    config = get_config()
-    return render_template_string(TEMPLATE, products=prods, config=config)
+    active_products = [p for p in PRODUCTS if p.get('status', 'active') == 'active']
+    return render_template_string(TEMPLATE, products=active_products, logo=SITE_LOGO)
 
 @app.route('/place_order', methods=['POST'])
 def place_order():
@@ -149,20 +154,17 @@ def place_order():
     data['order_id'] = order_id
     data['date'] = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p")
     data['client_ip'] = request.remote_addr
-    data['status_step'] = 1  # 1: Placed, 2: Packaging, 3: Shipped, 4: Delivered
-    data['status_text'] = "Order Placed"
+    data['status'] = "Order Placed"  # Initial status for step tracker
     
-    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', 'N/A')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
+    full_address = f"{data.get('street', '')}, Landmark: {data.get('landmark', 'None')}, {data.get('city', '')}, {data.get('state', '')} - {data.get('pincode', '')}"
     data['full_address'] = full_address
     
-    orders = get_orders()
-    orders.insert(0, data)
-    save_orders(orders)
+    ORDERS.insert(0, data)
     
-    # Send email in background thread
+    # Send background confirmation email instantly
     email_thread = threading.Thread(
         target=send_order_email, 
-        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address, data['payment_type'])
+        args=(data['email'], data['name'], order_id, data['amount'], data['items'], full_address)
     )
     email_thread.start()
     
@@ -170,98 +172,89 @@ def place_order():
 
 @app.route('/order_success/<order_id>')
 def order_success_page(order_id):
-    orders = get_orders()
-    order = next((o for o in orders if o['order_id'] == order_id), None)
+    order = next((o for o in ORDERS if o['order_id'] == order_id), None)
     return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id)
 
 @app.route('/track_order')
 def track_order():
     q = request.args.get('q', '').strip()
-    orders = get_orders()
-    for o in orders:
+    for o in ORDERS:
         if q.upper() == o['order_id'] or q.lower() == o['email'].lower():
             return jsonify({"found": True, "order": o})
     return jsonify({"found": False})
 
-# --- ADMIN PANEL ROUTE ---
+# --- ADMIN PANEL ROUTES ---
 @app.route('/admin')
 def admin_panel():
-    return render_template_string(ADMIN_TEMPLATE)
+    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, logo=SITE_LOGO)
 
-@app.route('/api/admin/data')
-def admin_data():
-    return jsonify({
-        "products": get_products(),
-        "orders": get_orders(),
-        "config": get_config()
-    })
-
-@app.route('/api/admin/order_status', methods=['POST'])
+@app.route('/admin/api/order/status', methods=['POST'])
 def admin_update_order_status():
     data = request.get_json()
     order_id = data.get('order_id')
-    step = int(data.get('step', 1))
-    status_texts = {1: "Order Placed", 2: "Packaging", 3: "Shipped", 4: "Delivered"}
-    
-    orders = get_orders()
-    for o in orders:
+    new_status = data.get('status')
+    for o in ORDERS:
         if o['order_id'] == order_id:
-            o['status_step'] = step
-            o['status_text'] = status_texts.get(step, "Processing")
-            break
-    save_orders(orders)
-    return jsonify({"status": "success", "orders": orders})
+            o['status'] = new_status
+            return jsonify({"success": True})
+    return jsonify({"success": False, "error": "Order not found"})
 
-@app.route('/api/admin/products', methods=['POST', 'PUT', 'DELETE'])
-def admin_manage_products():
-    prods = get_products()
+@app.route('/admin/api/product/add', methods=['POST'])
+def admin_add_product():
     data = request.get_json()
-    
-    if request.method == 'POST':
-        new_id = max([p['id'] for p in prods], default=0) + 1
-        new_prod = {
-            "id": new_id,
-            "name": data.get('name'),
-            "category": data.get('category', 'Skincare'),
-            "price": float(data.get('price', 0)),
-            "stock": int(data.get('stock', 10)),
-            "image": data.get('image', 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80'),
-            "desc": data.get('desc', ''),
-            "status": "active"
-        }
-        prods.append(new_prod)
-    elif request.method == 'PUT':
-        prod_id = int(data.get('id'))
-        for p in prods:
-            if p['id'] == prod_id:
-                p['name'] = data.get('name', p['name'])
-                p['category'] = data.get('category', p['category'])
-                p['price'] = float(data.get('price', p['price']))
-                p['stock'] = int(data.get('stock', p['stock']))
-                p['desc'] = data.get('desc', p['desc'])
-                if 'image' in data and data['image']:
-                    p['image'] = data['image']
-                if 'status' in data:
-                    p['status'] = data['status']
-                break
-    elif request.method == 'DELETE':
-        prod_id = int(data.get('id'))
-        prods = [p for p in prods if p['id'] != prod_id]
-        
-    save_products(prods)
-    return jsonify({"status": "success", "products": prods})
+    new_id = max([p['id'] for p in PRODUCTS], default=0) + 1
+    new_product = {
+        "id": new_id,
+        "name": data.get('name'),
+        "category": data.get('category', 'Skincare'),
+        "price": float(data.get('price', 0)),
+        "stock": int(data.get('stock', 10)),
+        "image": data.get('image', ''),
+        "video": data.get('video', ''),
+        "desc": data.get('desc', ''),
+        "status": "active"
+    }
+    PRODUCTS.append(new_product)
+    return jsonify({"success": True, "products": PRODUCTS})
 
-@app.route('/api/admin/config', methods=['POST'])
-def admin_update_config():
+@app.route('/admin/api/product/update', methods=['POST'])
+def admin_update_product():
     data = request.get_json()
-    config = get_config()
-    if 'logo' in data:
-        config['logo'] = data['logo']
-    save_config(config)
-    return jsonify({"status": "success", "config": config})
+    prod_id = int(data.get('id'))
+    for p in PRODUCTS:
+        if p['id'] == prod_id:
+            p['name'] = data.get('name', p['name'])
+            p['category'] = data.get('category', p['category'])
+            p['price'] = float(data.get('price', p['price']))
+            p['stock'] = int(data.get('stock', p['stock']))
+            p['desc'] = data.get('desc', p['desc'])
+            p['status'] = data.get('status', p['status'])
+            if data.get('image'):
+                p['image'] = data.get('image')
+            if data.get('video'):
+                p['video'] = data.get('video')
+            return jsonify({"success": True})
+    return jsonify({"success": False})
+
+@app.route('/admin/api/product/delete', methods=['POST'])
+def admin_delete_product():
+    global PRODUCTS
+    data = request.get_json()
+    prod_id = int(data.get('id'))
+    PRODUCTS = [p for p in PRODUCTS if p['id'] != prod_id]
+    return jsonify({"success": True, "products": PRODUCTS})
+
+@app.route('/admin/api/logo', methods=['POST'])
+def admin_update_logo():
+    global SITE_LOGO
+    data = request.get_json()
+    if data.get('logo'):
+        SITE_LOGO = data.get('logo')
+        return jsonify({"success": True})
+    return jsonify({"success": False})
 
 
-# --- PUBLIC FRONTEND TEMPLATE ---
+# --- FRONTEND TEMPLATE (STOREFRONT) ---
 TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -277,43 +270,43 @@ TEMPLATE = """
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
         body { background-color: var(--cream); color: var(--text-dark); overflow-x: hidden; scroll-behavior: smooth; }
 
-        .reveal { opacity: 0; transform: translateY(40px); transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1); }
+        .reveal { opacity: 0; transform: translateY(35px); transition: all 0.9s cubic-bezier(0.16, 1, 0.3, 1); }
         .reveal.active { opacity: 1; transform: translateY(0); }
 
-        header { position: fixed; top: 0; left: 0; width: 100%; background: rgba(250, 247, 240, 0.95); backdrop-filter: blur(12px); display: flex; justify-content: space-between; align-items: center; padding: 18px 30px; z-index: 1000; box-shadow: 0 4px 25px rgba(0,0,0,0.05); }
-        .nav-left { display: flex; align-items: center; gap: 18px; }
-        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: 0.3s; }
-        .menu-btn:hover { color: var(--accent-gold); }
+        header { position: fixed; top: 0; left: 0; width: 100%; background: rgba(250, 247, 240, 0.95); backdrop-filter: blur(14px); display: flex; justify-content: space-between; align-items: center; padding: 15px 30px; z-index: 1000; box-shadow: 0 4px 25px rgba(0,0,0,0.05); }
+        .nav-left { display: flex; align-items: center; gap: 15px; }
+        .menu-btn { font-size: 22px; color: var(--green-primary); cursor: pointer; background: none; border: none; transition: transform 0.2s; }
+        .menu-btn:hover { transform: scale(1.1); }
         .brand-container { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+        .logo-img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); }
         .logo { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: var(--green-primary); letter-spacing: 1px; text-transform: uppercase; }
         .logo span { color: var(--accent-gold); }
-        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: 0.3s; }
-        .cart-icon-container:hover { background: var(--green-primary); color: white; }
+        .cart-icon-container { position: relative; cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%; transition: background 0.3s; }
+        .cart-icon-container:hover { background: #e5ded4; }
         .cart-badge { position: absolute; top: -5px; right: -5px; background: var(--green-light); color: white; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 50%; }
 
-        /* Smooth Animated Sidebar Drawer */
-        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(5px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
+        /* Enhanced Sidebar Animation */
+        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px); z-index: 1500; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
         .sidebar-overlay.active { opacity: 1; visibility: visible; }
-        
-        .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.45s cubic-bezier(0.77, 0, 0.175, 1); padding: 30px 20px; overflow-y: auto; }
+        .sidebar { position: fixed; top: 0; left: -380px; width: 340px; height: 100%; background: white; box-shadow: var(--shadow); z-index: 2000; transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px 20px; overflow-y: auto; }
         .sidebar.active { transform: translateX(380px); }
-        .sidebar h3 { color: var(--green-primary); margin-bottom: 15px; font-size: 18px; font-family: 'Playfair Display', serif; }
-        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
-        .sidebar button.menu-item:hover { background: var(--cream-dark); }
+        .sidebar h3 { color: var(--green-primary); margin-bottom: 15px; font-size: 18px; }
+        .sidebar button.menu-item { width: 100%; padding: 14px; background: #f8f9fa; color: var(--green-primary); border: 1px solid #eee; border-radius: 10px; cursor: pointer; font-weight: 600; text-align: left; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
+        .sidebar button.menu-item:hover { background: var(--cream-dark); transform: translateX(4px); }
         .sidebar button.menu-item i { color: var(--accent-gold); width: 20px; }
-        .sidebar button.btn-back { background: #555; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; font-size: 12px; font-weight: 600; }
-        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); transition: 0.2s; }
-        .close-sidebar:hover { color: var(--green-light); }
+        .sidebar button.btn-back { background: #555; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; margin-bottom: 20px; font-size: 13px; }
+        .close-sidebar { font-size: 26px; cursor: pointer; float: right; color: var(--text-dark); transition: transform 0.2s; }
+        .close-sidebar:hover { transform: rotate(90deg); color: #c62828; }
         .sidebar input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; outline: none; }
         .sidebar button.action-btn { width: 100%; padding: 12px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: 0.2s; }
-        .support-card:hover { transform: translateX(3px); }
+        .support-card { background: var(--cream-dark); padding: 15px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 15px; text-decoration: none; color: var(--text-dark); transition: transform 0.2s; }
+        .support-card:hover { transform: translateY(-2px); }
 
         /* Hero */
         .hero { height: 80vh; display: flex; align-items: center; justify-content: center; text-align: center; background: radial-gradient(circle, #f3efea 0%, #faf7f0 75%); margin-top: 70px; padding: 0 20px; }
         .hero-content h1 { font-family: 'Playfair Display', serif; font-size: clamp(34px, 6vw, 54px); color: var(--green-primary); margin-bottom: 15px; }
         .btn-primary { background: var(--green-primary); color: white; padding: 14px 38px; border-radius: 35px; text-decoration: none; font-weight: 600; border: none; cursor: pointer; display: inline-block; transition: 0.3s; }
-        .btn-primary:hover { background: var(--green-light); transform: translateY(-2px); }
+        .btn-primary:hover { background: var(--green-light); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(27,67,50,0.2); }
 
         .features-banner { background: var(--green-primary); color: white; display: flex; justify-content: space-around; padding: 20px; flex-wrap: wrap; gap: 15px; }
         .feature-item { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; }
@@ -322,24 +315,24 @@ TEMPLATE = """
         .container { max-width: 1200px; margin: 0 auto; padding: 50px 20px; }
         .product-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 30px; }
         .product-card { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); transition: 0.3s; }
-        .product-card:hover { transform: translateY(-5px); }
-        .product-img-container { height: 230px; overflow: hidden; background: #f7f5f0; }
-        .product-img-container img { width: 100%; height: 100%; object-fit: cover; }
+        .product-card:hover { transform: translateY(-6px); box-shadow: 0 15px 35px rgba(0,0,0,0.1); }
+        .product-media-container { height: 230px; overflow: hidden; background: #f7f5f0; position: relative; }
+        .product-media-container img, .product-media-container video { width: 100%; height: 100%; object-fit: cover; }
         .product-info { padding: 20px; }
         .price-row { display: flex; justify-content: space-between; align-items: center; margin: 15px 0; }
         .price { font-size: 22px; font-weight: 700; color: var(--green-light); }
         .btn-group { display: flex; gap: 10px; }
-        .btn-cart { flex: 1; padding: 10px; background: var(--cream-dark); color: var(--green-primary); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
-        .btn-cart:hover { background: #e5dfd5; }
-        .btn-buy { flex: 1; padding: 10px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+        .btn-cart { flex: 1; padding: 10px; background: var(--cream-dark); color: var(--green-primary); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+        .btn-cart:hover { background: #e5ded4; }
+        .btn-buy { flex: 1; padding: 10px; background: var(--green-primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
         .btn-buy:hover { background: var(--green-light); }
 
-        /* Flying Cart Animation */
         .fly-item { position: fixed; z-index: 9999; width: 50px; height: 50px; object-fit: cover; border-radius: 50%; border: 2px solid var(--accent-gold); transition: all 0.8s cubic-bezier(0.2, 1, 0.3, 1); pointer-events: none; }
 
         /* Modal */
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); display: none; justify-content: center; align-items: center; z-index: 3000; padding: 15px; }
-        .modal-content { background: white; width: 100%; max-width: 520px; padding: 30px; border-radius: 20px; max-height: 90vh; overflow-y: auto; position: relative; }
+        .modal-content { background: white; width: 100%; max-width: 520px; padding: 30px; border-radius: 20px; max-height: 90vh; overflow-y: auto; position: relative; animation: modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes modalPop { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
         
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .full-width { grid-column: span 2; }
@@ -357,7 +350,7 @@ TEMPLATE = """
         .footer-grid h3 { color: var(--accent-gold); font-family: 'Playfair Display'; font-size: 20px; margin-bottom: 15px; }
         .footer-grid p { font-size: 14px; margin-bottom: 10px; color: #ddd; display: flex; align-items: center; gap: 10px; }
         .social-icons { margin-top: 15px; display: flex; gap: 15px; }
-        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; transition: 0.3s; }
+        .social-icons a { color: white; font-size: 18px; background: rgba(255,255,255,0.1); width: 38px; height: 38px; display: flex; justify-content: center; align-items: center; border-radius: 50%; text-decoration: none; transition: background 0.2s; }
         .social-icons a:hover { background: var(--accent-gold); }
         .footer-bottom { padding-top: 20px; font-size: 12px; color: #aaa; text-align: center; }
     </style>
@@ -368,6 +361,7 @@ TEMPLATE = """
         <div class="nav-left">
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
+                <img src="{{ logo }}" alt="Logo" class="logo-img" id="headerLogoImg">
                 <div class="logo"><span>Kesh</span> Aadar</div>
             </div>
         </div>
@@ -400,16 +394,16 @@ TEMPLATE = """
         <div id="sidebar-support-view" style="display:none;">
             <button class="btn-back" onclick="switchSidebarView('main')"><i class="fa-solid fa-arrow-left"></i> Back</button>
             <h3>Customer Support</h3>
-            <a href="mailto:subhraroy324@gmail.com" class="support-card"><i class="fa-solid fa-envelope" style="color: var(--accent-gold); font-size:18px;"></i><div><h4 style="font-size: 13px; color: var(--green-primary);">Email Support</h4><p style="font-size: 11px; color: #555;">subhraroy324@gmail.com</p></div></a>
-            <a href="tel:9163641507" class="support-card"><i class="fa-solid fa-phone-volume" style="color: var(--green-primary); font-size:18px;"></i><div><h4 style="font-size: 13px; color: var(--green-primary);">Call Support</h4><p style="font-size: 11px; color: #555;">+91 9163641507</p></div></a>
+            <a href="mailto:subhraroy324@gmail.com" class="support-card"><i class="fa-solid fa-envelope" style="color: var(--accent-gold);"></i><div><h4 style="font-size: 13px; color: var(--green-primary);">Email Support</h4><p style="font-size: 11px; color: #555;">subhraroy324@gmail.com</p></div></a>
+            <a href="tel:9163641507" class="support-card"><i class="fa-solid fa-phone-volume" style="color: var(--green-primary);"></i><div><h4 style="font-size: 13px; color: var(--green-primary);">Call Support</h4><p style="font-size: 11px; color: #555;">+91 9163641507</p></div></a>
             <a href="https://wa.me/919163641507" target="_blank" class="support-card" style="background: #e8f5e9;"><i class="fa-brands fa-whatsapp" style="color: #2e7d32; font-size: 20px;"></i><div><h4 style="font-size: 13px; color: #2e7d32;">WhatsApp Support</h4><p style="font-size: 11px; color: #555;">Instant messaging</p></div></a>
         </div>
 
         <div id="sidebar-faq-view" style="display:none;">
             <button class="btn-back" onclick="switchSidebarView('main')"><i class="fa-solid fa-arrow-left"></i> Back</button>
-            <h3>FAQs</h3>
-            <h4 style="font-size: 13px; color: var(--green-primary); margin-top:10px;">1. Estimated dispatch time?</h4><p style="font-size: 12px; color: #666; margin-bottom: 12px;">Orders are dispatched within 24-48 hours.</p>
-            <h4 style="font-size: 13px; color: var(--green-primary);">2. How do I track delivery?</h4><p style="font-size: 12px; color: #666; margin-bottom: 12px;">Use the tracking tool with your Order ID or Email.</p>
+            <h3>Frequently Asked Questions</h3>
+            <h4 style="font-size: 13px; color: var(--green-primary);">1. What is the estimated dispatch time?</h4><p style="font-size: 12px; color: #666; margin-bottom: 12px;">Orders are dispatched within 24-48 hours.</p>
+            <h4 style="font-size: 13px; color: var(--green-primary);">2. How do I track my delivery?</h4><p style="font-size: 12px; color: #666; margin-bottom: 12px;">You will receive an automated tracking link on your registered email address.</p>
         </div>
     </div>
 
@@ -435,7 +429,13 @@ TEMPLATE = """
         <div class="product-grid">
             {% for p in products %}
             <div class="product-card reveal" data-id="{{ p.id }}">
-                <div class="product-img-container"><img src="{{ p.image }}" alt="{{ p.name }}" id="img-{{ p.id }}"></div>
+                <div class="product-media-container">
+                    {% if p.video %}
+                        <video src="{{ p.video }}" autoplay muted loop playsinline id="media-{{ p.id }}"></video>
+                    {% else %}
+                        <img src="{{ p.image }}" alt="{{ p.name }}" id="media-{{ p.id }}">
+                    {% endif %}
+                </div>
                 <div class="product-info">
                     <h3 style="color:var(--green-primary); font-size:16px; margin-bottom:5px;">{{ p.name }}</h3>
                     <p style="font-size:12px; color:#666;">{{ p.desc }}</p>
@@ -482,7 +482,7 @@ TEMPLATE = """
     <div class="modal" id="cartModal">
         <div class="modal-content">
             <span class="close-sidebar" onclick="document.getElementById('cartModal').style.display='none'" style="position:absolute; right:20px; top:20px;">&times;</span>
-            <h3 style="color:var(--green-primary); margin-bottom:15px; font-family:'Playfair Display';">Your Shopping Basket</h3>
+            <h3 style="color:var(--green-primary); margin-bottom:15px;">Your Shopping Basket</h3>
             <div id="cart-items-container"></div>
             
             <div id="checkout-section" style="display:none; margin-top:20px;">
@@ -540,7 +540,7 @@ TEMPLATE = """
             for (var i = 0; i < reveals.length; i++) {
                 var windowHeight = window.innerHeight;
                 var elementTop = reveals[i].getBoundingClientRect().top;
-                if (elementTop < windowHeight - 40) { reveals[i].classList.add("active"); }
+                if (elementTop < windowHeight - 35) { reveals[i].classList.add("active"); }
             }
         }
         window.addEventListener("scroll", revealElements);
@@ -555,17 +555,16 @@ TEMPLATE = """
             document.getElementById('sidebar-'+v+'-view').style.display = 'block';
         }
 
-        // Flying Cart Animation
         function addToCartAndFly(event, id) {
             let p = productsData.find(x => x.id === id);
             cart.push(p); 
             updateCartUI();
 
-            let img = document.getElementById('img-' + id);
-            let flyer = img.cloneNode(true);
+            let mediaElem = document.getElementById('media-' + id);
+            let flyer = mediaElem.cloneNode(true);
             flyer.className = 'fly-item';
             
-            let rect = img.getBoundingClientRect();
+            let rect = mediaElem.getBoundingClientRect();
             flyer.style.top = rect.top + 'px';
             flyer.style.left = rect.left + 'px';
             document.body.appendChild(flyer);
@@ -660,7 +659,7 @@ TEMPLATE = """
                         alert("Invalid PIN Code entered.");
                     }
                 })
-                .catch(() => console.log("PIN lookup offline"));
+                .catch(() => console.log("PIN code lookup unavailable"));
             }
         }
 
@@ -710,8 +709,7 @@ TEMPLATE = """
             let amt = updateTotal();
             let payload = { 
                 name, email, phone, pincode, city, state, landmark, street, 
-                amount: amt, payment_type: mode === 'cod' ? 'Cash on Delivery' : 'Online Payment (Razorpay)', 
-                items: cart 
+                amount: amt, payment_type: mode === 'cod' ? 'Cash on Delivery' : 'Online Payment (Paid)', items: cart 
             };
 
             saveAddressToStorage(payload);
@@ -756,7 +754,7 @@ TEMPLATE = """
             fetch('/track_order?q=' + encodeURIComponent(q)).then(r => r.json()).then(data => {
                 let d = document.getElementById('track-result');
                 if(data.found) {
-                    d.innerHTML = `<div style="background:#e8f5e9; padding:12px; border-radius:8px; font-size:13px; margin-top:10px;"><h4 style="color:#2e7d32;">Found: ${data.order.order_id}</h4><p>Status: ${data.order.status_text}</p><a href="/order_success/${data.order.order_id}" style="color:var(--green-primary); font-weight:600; display:inline-block; margin-top:6px;">View Full Tracking &rarr;</a></div>`;
+                    d.innerHTML = `<div style="background:#e8f5e9; padding:12px; border-radius:8px; font-size:13px; margin-top:10px;"><h4 style="color:#2e7d32;">Found: ${data.order.order_id}</h4><p>Status: <b>${data.order.status}</b></p><a href="/order_success/${data.order.order_id}" style="color:var(--green-primary); font-weight:bold; display:block; margin-top:5px;">View Live Tracker &rarr;</a></div>`;
                 } else { 
                     d.innerHTML = '<p style="color:red; font-size:12px; margin-top:10px;">No order matching details found.</p>'; 
                 }
@@ -767,20 +765,20 @@ TEMPLATE = """
 </html>
 """
 
-# --- DEDICATED ORDER SUCCESS & LIVE TRACKING TEMPLATE ---
+# --- ORDER SUCCESS & LIVE STEP TRACKER TEMPLATE ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Status & Tracking | KESH AADAR</title>
+    <title>Order Status | KESH AADAR</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; }
+        :root { --green-primary: #1b4332; --green-light: #2d6a4f; --cream: #FAF7F0; --accent-gold: #d4a373; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
-        body { background-color: var(--cream); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 25px; }
+        body { background-color: var(--cream); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
         @keyframes popIn { 0% { transform: scale(0.3); opacity: 0; } 70% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
         @keyframes pulseGlow { 0% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(46, 125, 50, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); } }
@@ -788,26 +786,25 @@ SUCCESS_TEMPLATE = """
         .card { background: white; max-width: 620px; width: 100%; padding: 40px 30px; border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); text-align: center; }
         .icon-box { font-size: 45px; color: white; background: #2e7d32; border-radius: 50%; width: 85px; height: 85px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; animation: popIn 0.6s ease-out forwards, pulseGlow 1.8s infinite; }
         
-        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 30px; margin-bottom: 6px; }
+        h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 30px; margin-bottom: 8px; }
         p.subtitle { color: #666; font-size: 14px; margin-bottom: 25px; }
 
-        /* Amazon/Flipkart Style Tracker Line */
-        .tracker-container { margin: 30px 0; padding: 20px 10px; background: #FAF7F0; border-radius: 14px; border: 1px solid #EAE5D9; }
-        .track-steps { display: flex; justify-content: space-between; position: relative; margin: 0 20px; }
-        .track-steps::before { content: ''; position: absolute; top: 15px; left: 10px; right: 10px; height: 3px; background: #ddd; z-index: 1; }
-        .progress-line { position: absolute; top: 15px; left: 10px; height: 3px; background: #2e7d32; z-index: 2; transition: width 0.6s ease; }
-        
-        .step { position: relative; z-index: 3; text-align: center; }
-        .step-icon { width: 34px; height: 34px; border-radius: 50%; background: #ddd; color: white; display: flex; align-items: center; justify-content: center; font-size: 13px; margin: 0 auto 8px auto; transition: 0.3s; }
-        .step.active .step-icon { background: #2e7d32; box-shadow: 0 0 10px rgba(46,125,50,0.4); }
-        .step.completed .step-icon { background: #2e7d32; }
-        .step span { font-size: 11px; font-weight: 600; color: #666; display: block; }
-        .step.active span { color: #2e7d32; }
-
-        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: left; }
+        .order-info-box { background: #FAF7F0; border: 1px dashed var(--accent-gold); padding: 20px; border-radius: 12px; margin-bottom: 25px; text-align: left; }
         .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #444; }
 
-        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: 0.3s; }
+        /* Amazon / Flipkart Style Step Progress Bar */
+        .tracker-container { margin: 30px 0; padding: 20px 10px; background: #fdfbf7; border-radius: 12px; border: 1px solid #eae5d9; }
+        .steps-wrapper { display: flex; justify-content: space-between; position: relative; margin-bottom: 10px; }
+        .steps-wrapper::before { content: ''; position: absolute; top: 18px; left: 10%; width: 80%; height: 4px; background: #ddd; z-index: 1; }
+        
+        .step { position: relative; z-index: 2; text-align: center; flex: 1; }
+        .step-icon { width: 38px; height: 38px; background: #ddd; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; font-size: 14px; transition: 0.4s; }
+        .step.active .step-icon { background: var(--green-primary); box-shadow: 0 0 12px rgba(27, 67, 50, 0.4); }
+        .step.completed .step-icon { background: #2e7d32; }
+        .step-label { font-size: 11px; font-weight: 600; color: #666; }
+        .step.active .step-label { color: var(--green-primary); font-weight: 700; }
+
+        .btn-home { background: var(--green-primary); color: white; text-decoration: none; padding: 14px 30px; border-radius: 30px; font-weight: 600; display: inline-block; width: 100%; transition: background 0.2s; }
         .btn-home:hover { background: var(--green-light); }
     </style>
 </head>
@@ -815,63 +812,59 @@ SUCCESS_TEMPLATE = """
 
     <div class="card">
         <div class="icon-box"><i class="fa-solid fa-check"></i></div>
-        <h1>Order Status & Tracking</h1>
-        <p class="subtitle">Thank you for choosing Kesh Aadar.</p>
+        <h1>Order Confirmed!</h1>
+        <p class="subtitle">Thank you for choosing Kesh Aadar. Here is your live order status.</p>
 
         {% if order %}
-        {% set step = order.get('status_step', 1) %}
+        <div class="order-info-box">
+            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:15px; color:var(--green-primary);">{{ order.order_id }}</b></div>
+            <div class="info-row"><span>Order Date:</span><b>{{ order.date }}</b></div>
+            <div class="info-row"><span>Customer Name:</span><b>{{ order.name }}</b></div>
+            <div class="info-row"><span>Phone / Email:</span><b>{{ order.phone }} | {{ order.email }}</b></div>
+            <div class="info-row"><span>Payment Status:</span><b style="color:#2e7d32;">{{ order.payment_type }}</b></div>
+            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 260px; text-align: right;">{{ order.full_address }}</span></div>
+            <div class="info-row" style="margin-top: 10px; border-top: 1px solid #ddd; padding-top: 8px;"><span>Total Bill (with GST):</span><b style="font-size: 15px; color: var(--green-primary);">₹{{ order.amount }}</b></div>
+        </div>
+
+        <!-- Step Tracker Bar -->
         <div class="tracker-container">
-            <h4 style="font-size: 14px; color: var(--green-primary); margin-bottom: 15px;">Live Progress: <b>{{ order.get('status_text', 'Order Placed') }}</b></h4>
-            <div class="track-steps">
-                <div class="progress-line" id="progLine" style="width: {% if step == 1 %}0%{% elif step == 2 %}33%{% elif step == 3 %}66%{% else %}100%{% endif %};"></div>
-                
-                <div class="step {% if step >= 1 %}completed {% endif %}{% if step == 1 %}active{% endif %}">
-                    <div class="step-icon"><i class="fa-solid fa-clipboard-list"></i></div>
-                    <span>Placed</span>
+            <h4 style="font-size: 14px; color: var(--green-primary); margin-bottom: 15px; text-align: left;"><i class="fa-solid fa-truck-fast"></i> Live Delivery Progress</h4>
+            
+            {% set status = order.status %}
+            {% set s1 = 'completed' if status in ['Packaging', 'Shipped', 'Delivered'] else ('active' if status == 'Order Placed' else '') %}
+            {% set s2 = 'completed' if status in ['Shipped', 'Delivered'] else ('active' if status == 'Packaging' else '') %}
+            {% set s3 = 'completed' if status == 'Delivered' else ('active' if status == 'Shipped' else '') %}
+            {% set s4 = 'active completed' if status == 'Delivered' else '' %}
+
+            <div class="steps-wrapper">
+                <div class="step {{ s1 }}">
+                    <div class="step-icon"><i class="fa-solid fa-clipboard-check"></i></div>
+                    <div class="step-label">Order Placed</div>
                 </div>
-                <div class="step {% if step >= 2 %}completed {% endif %}{% if step == 2 %}active{% endif %}">
+                <div class="step {{ s2 }}">
                     <div class="step-icon"><i class="fa-solid fa-box-open"></i></div>
-                    <span>Packaging</span>
+                    <div class="step-label">Packaging</div>
                 </div>
-                <div class="step {% if step >= 3 %}completed {% endif %}{% if step == 3 %}active{% endif %}">
-                    <div class="step-icon"><i class="fa-solid fa-truck-fast"></i></div>
-                    <span>Shipped</span>
+                <div class="step {{ s3 }}">
+                    <div class="step-icon"><i class="fa-solid fa-truck"></i></div>
+                    <div class="step-label">Shipped</div>
                 </div>
-                <div class="step {% if step >= 4 %}completed {% endif %}{% if step == 4 %}active{% endif %}">
+                <div class="step {{ s4 }}">
                     <div class="step-icon"><i class="fa-solid fa-house-chimney"></i></div>
-                    <span>Delivered</span>
+                    <div class="step-label">Delivered</div>
                 </div>
             </div>
         </div>
 
-        <div class="order-info-box">
-            <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:15px; color:var(--green-primary);">{{ order.order_id }}</b></div>
-            <div class="info-row"><span>Customer Name:</span><b>{{ order.name }}</b></div>
-            <div class="info-row"><span>Phone Number:</span><b>{{ order.phone }}</b></div>
-            <div class="info-row"><span>Email:</span><b>{{ order.email }}</b></div>
-            <div class="info-row"><span>Payment Status:</span><b style="color: #2e7d32;">{{ order.payment_type }} (Paid)</b></div>
-            <div class="info-row"><span>Shipping Address:</span><span style="max-width: 260px; text-align: right;">{{ order.full_address }}</span></div>
-            
-            <div style="border-top: 1px solid #ddd; margin: 12px 0 8px 0; padding-top: 8px;">
-                <p style="font-size: 12px; font-weight: bold; color: var(--green-primary); margin-bottom: 5px;">Items Ordered:</p>
-                {% for item in order.items %}
-                <div class="info-row"><span>{{ item.name }}</span><span>₹{{ item.price }}</span></div>
-                {% endfor %}
-            </div>
-            
-            <div style="border-top: 1px dashed #d4a373; margin-top: 8px; padding-top: 8px;" class="info-row">
-                <span style="font-weight: bold; color: var(--green-primary);">Total Bill (Incl. GST & Shipping):</span>
-                <b style="font-size: 15px; color: var(--green-primary);">₹{{ order.amount }}</b>
-            </div>
-        </div>
         {% else %}
         <div class="order-info-box">
             <div class="info-row"><span>Order ID:</span><b style="font-family:monospace; font-size:16px; color:var(--green-primary);">{{ order_id }}</b></div>
-            <p style="font-size: 13px; color: red; margin-top: 10px;">Order details could not be retrieved or are still syncing.</p>
+            <p style="color: red; font-size: 12px; margin-top: 10px;">Order details are refreshing or not found in local memory session.</p>
         </div>
         {% endif %}
 
-        <p style="font-size: 11px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> Confirmation & tracking details sent to your registered email.</p>
+        <p style="font-size: 12px; color: #888; margin-bottom: 20px;"><i class="fa-solid fa-envelope"></i> An official invoice & tracking link has been emailed to you.</p>
+        
         <a href="/" class="btn-home">Continue Shopping</a>
     </div>
 
@@ -887,56 +880,39 @@ ADMIN_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | KESH AADAR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --cream: #FAF7F0; --cream-dark: #F3EFEA; --green-primary: #1b4332; --green-light: #2d6a4f; --accent-gold: #d4a373; --text-dark: #2b2b2b; }
+        :root { --green-primary: #1b4332; --cream: #FAF7F0; --accent-gold: #d4a373; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
-        body { background-color: var(--cream); color: var(--text-dark); display: flex; min-height: 100vh; }
+        body { background-color: var(--cream); color: #333; display: flex; min-height: 100vh; }
 
         /* Admin Sidebar */
-        .admin-sidebar { width: 280px; background: var(--green-primary); color: white; padding: 25px 20px; display: flex; flex-direction: column; justify-content: space-between; position: fixed; height: 100vh; left: 0; top: 0; transition: transform 0.4s ease; z-index: 100; }
-        .admin-brand { font-family: 'Playfair Display', serif; font-size: 22px; color: white; margin-bottom: 30px; display: flex; align-items: center; justify-content: space-between; }
-        .close-admin-sidebar { font-size: 22px; cursor: pointer; display: none; }
-        
-        .admin-nav { display: flex; flex-direction: column; gap: 10px; flex-grow: 1; }
-        .admin-nav-btn { background: rgba(255,255,255,0.08); color: white; border: none; padding: 12px 16px; border-radius: 8px; text-align: left; cursor: pointer; font-weight: 500; font-size: 14px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
-        .admin-nav-btn:hover, .admin-nav-btn.active { background: var(--accent-gold); color: var(--green-primary); font-weight: 600; }
-        
-        /* Main Admin Content */
-        .admin-main { margin-left: 280px; flex-grow: 1; padding: 40px; max-width: calc(100vw - 280px); }
-        .admin-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 35px; border-bottom: 1px solid #ddd; padding-bottom: 15px; }
-        .admin-header h1 { font-family: 'Playfair Display', serif; color: var(--green-primary); font-size: 26px; }
+        .admin-sidebar { width: 260px; background: var(--green-primary); color: white; padding: 30px 20px; display: flex; flex-direction: column; justify-content: space-between; position: fixed; height: 100%; transition: transform 0.3s; z-index: 100; }
+        .admin-sidebar h2 { font-size: 20px; color: var(--accent-gold); margin-bottom: 30px; letter-spacing: 1px; }
+        .admin-nav { display: flex; flex-direction: column; gap: 10px; }
+        .admin-nav-btn { background: none; border: none; color: #ddd; padding: 12px 15px; border-radius: 8px; text-align: left; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
+        .admin-nav-btn:hover, .admin-nav-btn.active { background: rgba(255,255,255,0.1); color: white; font-weight: 600; }
 
-        .dashboard-card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); margin-bottom: 30px; }
+        /* Main Content */
+        .admin-main { margin-left: 260px; flex: 1; padding: 40px; }
+        .admin-section { display: none; }
+        .admin-section.active { display: block; }
+
+        h2.sec-title { color: var(--green-primary); margin-bottom: 25px; font-size: 24px; }
+        .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); margin-bottom: 25px; }
         
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
         th { background: #f8f9fa; color: var(--green-primary); font-weight: 600; }
 
-        .badge { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-        .badge.active { background: #e8f5e9; color: #2e7d32; }
-        .badge.suspended { background: #ffebee; color: #c62828; }
+        .form-control { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; outline: none; }
+        .btn { background: var(--green-primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
+        .btn:hover { background: #2d6a4f; }
+        .btn-danger { background: #c62828; }
+        .btn-danger:hover { background: #b71c1c; }
 
-        .btn { padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 12px; transition: 0.2s; }
-        .btn-green { background: var(--green-primary); color: white; }
-        .btn-green:hover { background: var(--green-light); }
-        .btn-red { background: #c62828; color: white; }
-        .btn-gold { background: var(--accent-gold); color: white; }
-
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; font-size: 13px; font-weight: 600; color: var(--green-primary); margin-bottom: 6px; }
-        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; outline: none; }
-
-        .toggle-sidebar-mob { display: none; font-size: 22px; cursor: pointer; color: var(--green-primary); background: none; border: none; }
-
-        @media(max-width: 900px) {
-            .admin-sidebar { transform: translateX(-280px); }
-            .admin-sidebar.active { transform: translateX(0); }
-            .admin-main { margin-left: 0; max-width: 100%; padding: 20px; }
-            .toggle-sidebar-mob { display: block; }
-            .close-admin-sidebar { display: block; }
-        }
+        .status-select { padding: 6px 10px; border-radius: 6px; border: 1px solid #ccc; font-size: 12px; font-weight: 600; outline: none; }
     </style>
 </head>
 <body>
@@ -944,310 +920,268 @@ ADMIN_TEMPLATE = """
     <!-- Admin Sidebar -->
     <div class="admin-sidebar" id="adminSidebar">
         <div>
-            <div class="admin-brand">
-                <span>KESH ADMIN</span>
-                <span class="close-admin-sidebar" onclick="toggleAdminSidebar()">&times;</span>
-            </div>
+            <h2>KESH AADAR ADMIN</h2>
             <div class="admin-nav">
-                <button class="admin-nav-btn active" onclick="switchTab('orders')"><i class="fa-solid fa-box-archive"></i> Customer Orders</button>
-                <button class="admin-nav-btn" onclick="switchTab('inventory')"><i class="fa-solid fa-boxes-stacked"></i> Product Inventory</button>
-                <button class="admin-nav-btn" onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i> Store Settings & Logo</button>
+                <button class="admin-nav-btn active" onclick="switchTab('orders', this)"><i class="fa-solid fa-shopping-cart"></i> Orders Management</button>
+                <button class="admin-nav-btn" onclick="switchTab('products', this)"><i class="fa-solid fa-boxes-stacked"></i> Products Inventory</button>
+                <button class="admin-nav-btn" onclick="switchTab('logo', this)"><i class="fa-solid fa-image"></i> Website Logo</button>
+                <a href="/" target="_blank" class="admin-nav-btn" style="text-decoration:none;"><i class="fa-solid fa-globe"></i> Visit Storefront</a>
             </div>
         </div>
-        <div>
-            <a href="/" class="admin-nav-btn" style="text-decoration:none; text-align:center; justify-content:center; background:rgba(255,255,255,0.15);"><i class="fa-solid fa-store"></i> Visit Live Store</a>
-        </div>
+        <p style="font-size: 11px; color: #aaa;">Secure Admin Panel v2.6</p>
     </div>
 
-    <!-- Main Admin Area -->
+    <!-- Admin Main Content Area -->
     <div class="admin-main">
-        <div class="admin-header">
-            <div style="display:flex; align-items:center; gap:15px;">
-                <button class="toggle-sidebar-mob" onclick="toggleAdminSidebar()"><i class="fa-solid fa-bars"></i></button>
-                <h1 id="pageTitle">Customer Orders</h1>
-            </div>
-            <span style="font-size: 13px; color: #666;">Admin Dashboard v2.6</span>
-        </div>
-
-        <!-- Orders Tab -->
-        <div id="tab-orders" class="admin-tab-content">
-            <div class="dashboard-card">
-                <h3 style="color:var(--green-primary); margin-bottom:15px;">Manage Incoming Orders</h3>
+        
+        <!-- ORDERS TAB -->
+        <div class="admin-section active" id="tab-orders">
+            <h2 class="sec-title">Customer Orders Management</h2>
+            <div class="card">
+                {% if orders %}
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
                             <tr>
                                 <th>Order ID & Date</th>
                                 <th>Customer Details</th>
-                                <th>Shipping Address</th>
+                                <th>Delivery Address</th>
                                 <th>Items & Amount</th>
                                 <th>Status Control</th>
                             </tr>
                         </thead>
-                        <tbody id="ordersTableBody">
-                            <tr><td colspan="5" style="text-align:center; color:#888;">Loading orders...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- Inventory Tab -->
-        <div id="tab-inventory" class="admin-tab-content" style="display:none;">
-            <div class="dashboard-card">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                    <h3 style="color:var(--green-primary);">Product Inventory Management</h3>
-                    <button class="btn btn-green" onclick="openAddProductModal()"><i class="fa-solid fa-plus"></i> Add New Product</button>
-                </div>
-                <div style="overflow-x: auto;">
-                    <table>
-                        <thead>
+                        <tbody>
+                            {% for o in orders %}
                             <tr>
-                                <th>Image</th>
-                                <th>Product Name</th>
-                                <th>Category</th>
-                                <th>Price</th>
-                                <th>Stock</th>
-                                <th>Status</th>
-                                <th>Actions</th>
+                                <td>
+                                    <b style="font-family:monospace; color:var(--green-primary);">{{ o.order_id }}</b><br>
+                                    <span style="font-size:11px; color:#666;">{{ o.date }}</span><br>
+                                    <span style="font-size:11px; background:#e8f5e9; color:#2e7d32; padding:2px 6px; border-radius:4px; font-weight:600;">{{ o.payment_type }}</span>
+                                </td>
+                                <td>
+                                    <b>{{ o.name }}</b><br>
+                                    <i class="fa-solid fa-phone" style="font-size:10px;"></i> {{ o.phone }}<br>
+                                    <i class="fa-solid fa-envelope" style="font-size:10px;"></i> {{ o.email }}
+                                </td>
+                                <td style="max-width: 240px; font-size:12px;">
+                                    {{ o.full_address }}
+                                </td>
+                                <td>
+                                    <ul style="padding-left:15px; font-size:12px; margin-bottom:5px;">
+                                        {% for item in o.items %}
+                                        <li>{{ item.name }} (₹{{ item.price }})</li>
+                                        {% endfor %}
+                                    </ul>
+                                    <b>Total: ₹{{ o.amount }}</b>
+                                </td>
+                                <td>
+                                    <select class="status-select" onchange="updateOrderStatus('{{ o.order_id }}', this.value)">
+                                        <option value="Order Placed" {% if o.status == 'Order Placed' %}selected{% endif %}>Order Placed</option>
+                                        <option value="Packaging" {% if o.status == 'Packaging' %}selected{% endif %}>Packaging</option>
+                                        <option value="Shipped" {% if o.status == 'Shipped' %}selected{% endif %}>Shipped</option>
+                                        <option value="Delivered" {% if o.status == 'Delivered' %}selected{% endif %}>Delivered</option>
+                                    </select>
+                                </td>
                             </tr>
-                        </thead>
-                        <tbody id="inventoryTableBody">
-                            <tr><td colspan="7" style="text-align:center; color:#888;">Loading inventory...</td></tr>
+                            {% endfor %}
                         </tbody>
                     </table>
                 </div>
+                {% else %}
+                <p style="color:#666; font-size:14px; text-align:center; padding:20px;">No customer orders received yet.</p>
+                {% endif %}
             </div>
         </div>
 
-        <!-- Settings Tab -->
-        <div id="tab-settings" class="admin-tab-content" style="display:none;">
-            <div class="dashboard-card" style="max-width: 600px;">
-                <h3 style="color:var(--green-primary); margin-bottom:20px;">Store Branding & Logo</h3>
-                <form onsubmit="event.preventDefault(); updateConfig();">
-                    <div class="form-group">
-                        <label>Store Logo Image URL</label>
-                        <input type="text" id="configLogoInput" placeholder="https://image-url.com/logo.jpg">
+        <!-- PRODUCTS / INVENTORY TAB -->
+        <div class="admin-section" id="tab-products">
+            <h2 class="sec-title">Product Inventory & Upload</h2>
+            
+            <div class="card">
+                <h3 style="font-size: 16px; color: var(--green-primary); margin-bottom: 15px;">Add New Botanical Product</h3>
+                <form onsubmit="event.preventDefault(); addProduct();">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <input type="text" id="new-prod-name" class="form-control" placeholder="Product Name *" required>
+                        <input type="text" id="new-prod-category" class="form-control" placeholder="Category (e.g. Skincare, Haircare)" required>
+                        <input type="number" id="new-prod-price" class="form-control" placeholder="Price (₹) *" required>
+                        <input type="number" id="new-prod-stock" class="form-control" placeholder="Stock Quantity *" required>
                     </div>
-                    <button type="submit" class="btn btn-green">Save Settings</button>
+                    <textarea id="new-prod-desc" class="form-control" placeholder="Product Description *" rows="2" required></textarea>
+                    
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                        <div>
+                            <label style="font-size:12px; font-weight:600; color:#555;">Upload Product Image (Gallery File):</label>
+                            <input type="file" id="new-prod-img-file" class="form-control" accept="image/*" onchange="encodeFile(this, 'new-prod-img-base64')">
+                            <input type="hidden" id="new-prod-img-base64">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:600; color:#555;">Upload Product Video (Optional):</label>
+                            <input type="file" id="new-prod-vid-file" class="form-control" accept="video/*" onchange="encodeFile(this, 'new-prod-vid-base64')">
+                            <input type="hidden" id="new-prod-vid-base64">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn"><i class="fa-solid fa-plus"></i> Publish Product</button>
                 </form>
             </div>
-        </div>
-    </div>
 
-    <!-- Add/Edit Product Modal -->
-    <div id="productModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:2000; justify-content:center; align-items:center;">
-        <div style="background:white; width:100%; max-width:500px; padding:30px; border-radius:16px; position:relative;">
-            <span onclick="document.getElementById('productModal').style.display='none'" style="position:absolute; right:20px; top:20px; cursor:pointer; font-size:22px;">&times;</span>
-            <h3 id="modalProdTitle" style="color:var(--green-primary); margin-bottom:20px;">Add New Product</h3>
-            <form onsubmit="event.preventDefault(); saveProductForm();">
-                <input type="hidden" id="editProdId">
-                <div class="form-group"><label>Product Name</label><input type="text" id="prodName" required></div>
-                <div class="form-group"><label>Category</label><input type="text" id="prodCategory" value="Skincare" required></div>
-                <div class="form-group"><label>Price (₹)</label><input type="number" id="prodPrice" required></div>
-                <div class="form-group"><label>Stock Quantity</label><input type="number" id="prodStock" required></div>
-                <div class="form-group"><label>Image URL</label><input type="text" id="prodImage" placeholder="https://..." required></div>
-                <div class="form-group"><label>Description</label><textarea id="prodDesc" rows="2"></textarea></div>
-                <button type="submit" class="btn btn-green" style="width:100%;">Save Product</button>
-            </form>
+            <div class="card">
+                <h3 style="font-size: 16px; color: var(--green-primary); margin-bottom: 15px;">Existing Formulations Inventory</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Preview</th>
+                            <th>Name & Category</th>
+                            <th>Price & Stock</th>
+                            <th>Status (Live / Suspended)</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventory-table-body">
+                        {% for p in products %}
+                        <tr id="prod-row-{{ p.id }}">
+                            <td>
+                                {% if p.video %}
+                                    <video src="{{ p.video }}" style="width:45px; height:45px; object-fit:cover; border-radius:6px;" muted autoplay loop></video>
+                                {% else %}
+                                    <img src="{{ p.image }}" style="width:45px; height:45px; object-fit:cover; border-radius:6px;">
+                                {% endif %}
+                            </td>
+                            <td>
+                                <b>{{ p.name }}</b><br><span style="font-size:11px; color:#666;">{{ p.category }}</span>
+                            </td>
+                            <td>
+                                ₹<input type="number" id="edit-price-{{ p.id }}" value="{{ p.price }}" style="width:70px; padding:4px;"> | 
+                                Qty:<input type="number" id="edit-stock-{{ p.id }}" value="{{ p.stock }}" style="width:50px; padding:4px;">
+                            </td>
+                            <td>
+                                <select id="edit-status-{{ p.id }}" class="status-select">
+                                    <option value="active" {% if p.status == 'active' %}selected{% endif %}>Active (Live)</option>
+                                    <option value="suspended" {% if p.status == 'suspended' %}selected{% endif %}>Suspended (Hidden)</option>
+                                </select>
+                            </td>
+                            <td>
+                                <button class="btn" onclick="updateProduct({{ p.id }})" style="padding:6px 12px; font-size:11px;"><i class="fa-solid fa-save"></i> Save</button>
+                                <button class="btn btn-danger" onclick="deleteProduct({{ p.id }})" style="padding:6px 12px; font-size:11px;"><i class="fa-solid fa-trash"></i></button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
+
+        <!-- LOGO MANAGEMENT TAB -->
+        <div class="admin-section" id="tab-logo">
+            <h2 class="sec-title">Website Profile Logo Customization</h2>
+            <div class="card" style="max-width: 500px;">
+                <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Upload a new image file from your device to instantly update the storefront header logo.</p>
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <img src="{{ logo }}" alt="Current Logo" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid var(--accent-gold); object-fit: cover;" id="currentLogoPreview">
+                </div>
+                <input type="file" id="logo-file-input" class="form-control" accept="image/*" onchange="encodeFile(this, 'logo-base64')">
+                <input type="hidden" id="logo-base64">
+                <button type="button" class="btn" onclick="updateLogo()" style="width: 100%; margin-top: 10px;">Update Website Logo</button>
+            </div>
+        </div>
+
     </div>
 
     <script>
-        let adminData = {};
+        function switchTab(tabId, btn) {
+            document.querySelectorAll('.admin-section').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.admin-nav-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tabId).classList.add('active');
+            btn.classList.add('active');
+        }
 
-        function fetchAdminData() {
-            fetch('/api/admin/data')
-            .then(res => res.json())
-            .then(data => {
-                adminData = data;
-                renderOrders();
-                renderInventory();
-                if(data.config) {
-                    document.getElementById('configLogoInput').value = data.config.logo || '';
+        function encodeFile(input, targetId) {
+            let file = input.files[0];
+            if(file) {
+                let reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById(targetId).value = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function updateOrderStatus(order_id, status) {
+            fetch('/admin/api/order/status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order_id, status })
+            }).then(r => r.json()).then(res => {
+                if(res.success) {
+                    console.log("Status updated successfully.");
                 }
             });
         }
-        fetchAdminData();
 
-        function toggleAdminSidebar() {
-            document.getElementById('adminSidebar').classList.toggle('active');
-        }
+        function addProduct() {
+            let name = document.getElementById('new-prod-name').value;
+            let category = document.getElementById('new-prod-category').value;
+            let price = document.getElementById('new-prod-price').value;
+            let stock = document.getElementById('new-prod-stock').value;
+            let desc = document.getElementById('new-prod-desc').value;
+            let image = document.getElementById('new-prod-img-base64').value || 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80';
+            let video = document.getElementById('new-prod-vid-base64').value;
 
-        function switchTab(tab) {
-            document.querySelectorAll('.admin-tab-content').forEach(el => el.style.display = 'none');
-            document.querySelectorAll('.admin-nav-btn').forEach(el => el.classList.remove('active'));
-            
-            document.getElementById('tab-' + tab).style.display = 'block';
-            event.currentTarget.classList.add('active');
-            
-            let titles = { 'orders': 'Customer Orders', 'inventory': 'Product Inventory', 'settings': 'Store Settings & Logo' };
-            document.getElementById('pageTitle').innerText = titles[tab];
-            if(window.innerWidth <= 900) toggleAdminSidebar();
-        }
-
-        function renderOrders() {
-            let tbody = document.getElementById('ordersTableBody');
-            tbody.innerHTML = '';
-            if(!adminData.orders || adminData.orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">No orders received yet.</td></tr>';
-                return;
-            }
-            adminData.orders.forEach(o => {
-                let itemsList = o.items.map(i => `<li>${i.name} (x1) - ₹${i.price}</li>`).join('');
-                let currentStep = o.status_step || 1;
-                
-                tbody.innerHTML += `
-                <tr>
-                    <td><b>${o.order_id}</b><br><span style="font-size:11px; color:#777;">${o.date}</span></td>
-                    <td><b>${o.name}</b><br><span style="font-size:11px; color:#555;">📞 ${o.phone}</span><br><span style="font-size:11px; color:#555;">✉️ ${o.email}</span></td>
-                    <td><span style="font-size:12px;">${o.full_address}</span></td>
-                    <td><ul style="padding-left:15px; font-size:12px; margin-bottom:5px;">${itemsList}</ul><b>Total: ₹${o.amount}</b> (${o.payment_type})</td>
-                    <td>
-                        <select onchange="updateOrderStatus('${o.order_id}', this.value)" style="padding:6px; border-radius:6px; border:1px solid #ddd; font-size:12px; font-weight:600; background:#f9f9f9;">
-                            <option value="1" ${currentStep == 1 ? 'selected' : ''}>1. Order Placed</option>
-                            <option value="2" ${currentStep == 2 ? 'selected' : ''}>2. Packaging</option>
-                            <option value="3" ${currentStep == 3 ? 'selected' : ''}>3. Shipped</option>
-                            <option value="4" ${currentStep == 4 ? 'selected' : ''}>4. Delivered</option>
-                        </select>
-                    </td>
-                </tr>`;
-            });
-        }
-
-        function updateOrderStatus(order_id, step) {
-            fetch('/api/admin/order_status', {
+            fetch('/admin/api/product/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ order_id, step: parseInt(step) })
-            })
-            .then(res => res.json())
-            .then(data => {
-                adminData.orders = data.orders;
-                renderOrders();
+                body: JSON.stringify({ name, category, price, stock, desc, image, video })
+            }).then(r => r.json()).then(res => {
+                if(res.success) {
+                    alert('Product published successfully!');
+                    location.reload();
+                }
             });
         }
 
-        function renderInventory() {
-            let tbody = document.getElementById('inventoryTableBody');
-            tbody.innerHTML = '';
-            if(!adminData.products || adminData.products.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#888;">No products found.</td></tr>';
-                return;
-            }
-            adminData.products.forEach(p => {
-                let isSuspended = p.status === 'suspended';
-                tbody.innerHTML += `
-                <tr>
-                    <td><img src="${p.image}" width="40" height="40" style="object-fit:cover; border-radius:6px;"></td>
-                    <td><b>${p.name}</b><br><span style="font-size:11px; color:#666;">${p.desc}</span></td>
-                    <td>${p.category}</td>
-                    <td>₹${p.price}</td>
-                    <td>${p.stock}</td>
-                    <td><span class="badge ${isSuspended ? 'suspended' : 'active'}">${isSuspended ? 'Suspended' : 'Live'}</span></td>
-                    <td>
-                        <div style="display:flex; gap:6px;">
-                            <button class="btn btn-gold" onclick="openEditProductModal(${p.id})">Edit</button>
-                            <button class="btn ${isSuspended ? 'btn-green' : 'btn-red'}" onclick="toggleSuspendProduct(${p.id}, '${isSuspended ? 'active' : 'suspended'}')">${isSuspended ? 'Restore' : 'Suspend'}</button>
-                            <button class="btn btn-red" onclick="deleteProduct(${p.id})"><i class="fa-solid fa-trash"></i></button>
-                        </div>
-                    </td>
-                </tr>`;
-            });
-        }
+        function updateProduct(id) {
+            let price = document.getElementById('edit-price-' + id).value;
+            let stock = document.getElementById('edit-stock-' + id).value;
+            let status = document.getElementById('edit-status-' + id).value;
 
-        function openAddProductModal() {
-            document.getElementById('modalProdTitle').innerText = 'Add New Product';
-            document.getElementById('editProdId').value = '';
-            document.getElementById('prodName').value = '';
-            document.getElementById('prodCategory').value = 'Skincare';
-            document.getElementById('prodPrice').value = '';
-            document.getElementById('prodStock').value = '50';
-            document.getElementById('prodImage').value = '';
-            document.getElementById('prodDesc').value = '';
-            document.getElementById('productModal').style.display = 'flex';
-        }
-
-        function openEditProductModal(id) {
-            let p = adminData.products.find(x => x.id === id);
-            if(!p) return;
-            document.getElementById('modalProdTitle').innerText = 'Edit Product';
-            document.getElementById('editProdId').value = p.id;
-            document.getElementById('prodName').value = p.name;
-            document.getElementById('prodCategory').value = p.category;
-            document.getElementById('prodPrice').value = p.price;
-            document.getElementById('prodStock').value = p.stock;
-            document.getElementById('prodImage').value = p.image;
-            document.getElementById('prodDesc').value = p.desc;
-            document.getElementById('productModal').style.display = 'flex';
-        }
-
-        function saveProductForm() {
-            let id = document.getElementById('editProdId').value;
-            let payload = {
-                name: document.getElementById('prodName').value,
-                category: document.getElementById('prodCategory').value,
-                price: document.getElementById('prodPrice').value,
-                stock: document.getElementById('prodStock').value,
-                image: document.getElementById('prodImage').value,
-                desc: document.getElementById('prodDesc').value
-            };
-
-            let method = 'POST';
-            if(id) {
-                method = 'PUT';
-                payload.id = parseInt(id);
-            }
-
-            fetch('/api/admin/products', {
-                method: method,
+            fetch('/admin/api/product/update', {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            })
-            .then(res => res.json())
-            .then(data => {
-                adminData.products = data.products;
-                renderInventory();
-                document.getElementById('productModal').style.display = 'none';
-            });
-        }
-
-        function toggleSuspendProduct(id, newStatus) {
-            fetch('/api/admin/products', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: id, status: newStatus })
-            })
-            .then(res => res.json())
-            .then(data => {
-                adminData.products = data.products;
-                renderInventory();
+                body: JSON.stringify({ id, price, stock, status })
+            }).then(r => r.json()).then(res => {
+                if(res.success) {
+                    alert('Product inventory updated!');
+                }
             });
         }
 
         function deleteProduct(id) {
-            if(!confirm("Are you sure you want to permanently delete this product?")) return;
-            fetch('/api/admin/products', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: id })
-            })
-            .then(res => res.json())
-            .then(data => {
-                adminData.products = data.products;
-                renderInventory();
-            });
+            if(confirm('Are you sure you want to delete this product?')) {
+                fetch('/admin/api/product/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                }).then(r => r.json()).then(res => {
+                    if(res.success) {
+                        document.getElementById('prod-row-' + id).remove();
+                    }
+                });
+            }
         }
 
-        function updateConfig() {
-            let logo = document.getElementById('configLogoInput').value;
-            fetch('/api/admin/config', {
+        function updateLogo() {
+            let logo = document.getElementById('logo-base64').value;
+            if(!logo) return alert('Please select an image file first.');
+
+            fetch('/admin/api/logo', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ logo })
-            })
-            .then(res => res.json())
-            .then(() => alert("Settings updated successfully!"));
+            }).then(r => r.json()).then(res => {
+                if(res.success) {
+                    alert('Website logo updated successfully!');
+                    document.getElementById('currentLogoPreview').src = logo;
+                }
+            });
         }
     </script>
 </body>
