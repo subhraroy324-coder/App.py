@@ -16,7 +16,7 @@ import time
 import threading
 from collections import defaultdict
 import razorpay
-import requests  # <-- for SMS API
+import requests  # for SMS API
 
 # --- REPORTLAB PDF LIBRARIES ---
 try:
@@ -39,6 +39,9 @@ except Exception as e:
 app = Flask(__name__)
 app.secret_key = 'chiranjeevi_adorica_botanicals_secure_key_2026'
 
+# --- PRODUCTION BASE URL (change to your actual domain) ---
+BASE_URL = "https://www.chiranjeevi.shop"   # or "http://www.chiranjeevi.shop" if no SSL
+
 # --- RAZORPAY CONFIGURATION ---
 RAZORPAY_KEY_ID = "rzp_live_TNBc6IiPsiAkOD"
 RAZORPAY_KEY_SECRET = "iLeTigZRFMEzubj7hEbW9mnR"
@@ -51,9 +54,9 @@ SMTP_EMAIL = "keshaadar@gmail.com"
 SMTP_PASS = "zvxb mrbs ccoi vfrl"
 
 # --- SMS CONFIGURATION (TextBee) ---
-TEXTBEE_API_KEY = "txb_O8FN8nZ2Lejzky2iQBWZeg7whnf7XFI3"  # your actual key
+TEXTBEE_API_KEY = "txb_O8FN8nZ2Lejzky2iQBWZeg7whnf7XFI3"
 TEXTBEE_BASE_URL = "https://api.textbee.dev/api/v1"
-TEXTBEE_DEVICE_ID = "6a881aaa300559904690fcd7"           # your device ID
+TEXTBEE_DEVICE_ID = "6a881aaa300559904690fcd7"
 
 # --- DDOS PROTECTION & RATE LIMITING ---
 IP_REQUESTS = defaultdict(list)
@@ -215,17 +218,16 @@ def send_sms(phone, message):
     """Send an SMS via TextBee API."""
     if not phone or len(phone) < 10:
         return False
-    # Ensure phone is in international format (add +91 if 10 digits)
     phone_str = str(phone).strip()
     if phone_str.isdigit() and len(phone_str) == 10:
         phone_str = "+91" + phone_str
     elif not phone_str.startswith('+'):
-        phone_str = "+" + phone_str  # fallback
+        phone_str = "+" + phone_str
 
     payload = {
         "deviceId": TEXTBEE_DEVICE_ID,
         "recipients": [phone_str],
-        "message": message[:160]  # SMS length limit
+        "message": message[:160]
     }
     headers = {"x-api-key": TEXTBEE_API_KEY}
     try:
@@ -241,7 +243,6 @@ def send_sms(phone, message):
         print(f"SMS error: {e}")
         return False
 
-# --- ASYNCHRONOUS SMS SENDER ---
 def _send_sms_thread(phone, message):
     send_sms(phone, message)
 
@@ -256,12 +257,10 @@ def num_to_words_inr(number):
         n = int(round(float(number)))
         if n == 0:
             return "Zero Rupees Only"
-        
         units = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
                  "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
                  "Seventeen", "Eighteen", "Nineteen"]
         tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
-        
         def convert_below_thousand(num):
             if num == 0:
                 return ""
@@ -271,7 +270,6 @@ def num_to_words_inr(number):
                 return tens[num // 10] + " " + convert_below_thousand(num % 10)
             else:
                 return units[num // 100] + " Hundred " + convert_below_thousand(num % 100)
-
         words = ""
         if n >= 10000000:
             words += convert_below_thousand(n // 10000000) + "Crore "
@@ -284,7 +282,6 @@ def num_to_words_inr(number):
             n %= 1000
         if n > 0:
             words += convert_below_thousand(n)
-
         return words.strip() + " Rupees Only"
     except Exception:
         return f"{number} Rupees Only"
@@ -516,18 +513,21 @@ def trigger_async_email(msg_obj, recipient_email):
 
 # --- HELPER: add/update customer ---
 def add_or_update_customer(name, email, phone):
-    # check if exists
     for c in CUSTOMERS:
         if c['email'] == email:
             c['name'] = name
             c['phone'] = phone
             return
-    # new customer
     CUSTOMERS.append({"name": name, "email": email, "phone": phone})
 
-# --- EMAIL + SMS SENDERS FOR EACH EVENT ---
-def send_order_email_and_sms(order_data, order_id, qr_target_url):
-    # Email part (as before)
+# ==================================================
+# NEW: ASYNCHRONOUS ORDER NOTIFICATION (Email + SMS)
+# ==================================================
+def send_order_notifications(order_data, order_id, qr_target_url):
+    """
+    This function runs in a background thread.
+    It generates the PDF invoice, composes the email, and sends both email and SMS.
+    """
     try:
         recipient_email = order_data['email']
         name = order_data['name']
@@ -535,6 +535,7 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
         items = order_data['items']
         full_address = order_data['full_address']
 
+        # --- Build email ---
         msg = MIMEMultipart('mixed')
         msg['Subject'] = f"Order Confirmed & PDF Invoice: {order_id} - CHIRANJEEVI "
         msg['From'] = f"CHIRANJEEVI  <{SMTP_EMAIL}>"
@@ -584,6 +585,7 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
         
         msg.attach(MIMEText(html_content, 'html'))
 
+        # --- Generate PDF (in background) ---
         if REPORTLAB_AVAILABLE:
             pdf_bytes = generate_order_pdf(order_data, order_id, qr_target_url)
             if pdf_bytes:
@@ -591,19 +593,18 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
                 part.add_header('Content-Disposition', 'attachment', filename=f"Invoice_{order_id}.pdf")
                 msg.attach(part)
 
+        # --- Send email asynchronously ---
         trigger_async_email(msg, recipient_email)
-    except Exception as e:
-        print(f"Error compiling send_order_email: {e}")
 
-    # SMS part
-    try:
-        sms_msg = f"CHIRANJEEVI : Order {order_id} confirmed! Total ₹{order_data['amount']}. Track at {qr_target_url}. Thank you!"
+        # --- Send SMS ---
+        sms_msg = f"CHIRANJEEVI : Order {order_id} confirmed! Total ₹{amount}. Track at {qr_target_url}. Thank you!"
         trigger_async_sms(order_data['phone'], sms_msg)
-    except Exception as e:
-        print(f"SMS send error: {e}")
 
+    except Exception as e:
+        print(f"Error in background order notification: {e}")
+
+# --- REJECTION, REFUND, STATUS UPDATE NOTIFICATIONS (with BASE_URL) ---
 def send_rejection_email_and_sms(order_data, order_id, amount):
-    # Email
     try:
         recipient_email = order_data['email']
         name = order_data['name']
@@ -643,15 +644,13 @@ def send_rejection_email_and_sms(order_data, order_id, amount):
     except Exception as e:
         print(f"Rejection email failed: {e}")
 
-    # SMS
     try:
-        sms_msg = f"CHIRANJEEVI: Order {order_id} cancelled. Refund of ₹{amount} initiated. Track: http://127.0.0.1:5644/order_success/{order_id}"
+        sms_msg = f"CHIRANJEEVI: Order {order_id} cancelled. Refund of ₹{amount} initiated. Track: {BASE_URL}/order_success/{order_id}"
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS reject error: {e}")
 
 def send_refund_email_and_sms(order_data, order_id, amount):
-    # Email
     try:
         recipient_email = order_data['email']
         name = order_data['name']
@@ -691,7 +690,6 @@ def send_refund_email_and_sms(order_data, order_id, amount):
     except Exception as e:
         print(f"Refund email failed: {e}")
 
-    # SMS
     try:
         sms_msg = f"CHIRANJEEVI : Refund of ₹{amount} for order {order_id} has been processed. It will reflect in 2-3 days."
         trigger_async_sms(order_data['phone'], sms_msg)
@@ -699,7 +697,6 @@ def send_refund_email_and_sms(order_data, order_id, amount):
         print(f"SMS refund error: {e}")
 
 def send_status_update_email_and_sms(order_data, order_id, step, status_text):
-    # Email (as before)
     try:
         recipient_email = order_data['email']
         name = order_data['name']
@@ -707,7 +704,7 @@ def send_status_update_email_and_sms(order_data, order_id, step, status_text):
         msg['From'] = f"CHIRANJEEVI  <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
-        track_url = f"http://127.0.0.1:5644/order_success/{order_id}"
+        track_url = f"{BASE_URL}/order_success/{order_id}"
 
         if step == 2:
             subject = f"📦 Packaging Completed: Order {order_id} - CHIRANJEEVI"
@@ -778,11 +775,10 @@ def send_status_update_email_and_sms(order_data, order_id, step, status_text):
     except Exception as e:
         print(f"Status email failed: {e}")
 
-    # SMS
     try:
         status_map = {1: "Placed", 2: "Packaging", 3: "Shipped", 4: "Delivered", 5: "Refunded"}
         step_text = status_map.get(step, status_text)
-        sms_msg = f"CHIRANJEEVI: Order {order_id} status: {step_text}. Track: http://127.0.0.1:5644/order_success/{order_id}"
+        sms_msg = f"CHIRANJEEVI: Order {order_id} status: {step_text}. Track: {BASE_URL}/order_success/{order_id}"
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS status error: {e}")
@@ -888,7 +884,7 @@ def check_qr_status(qr_id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-# --- PLACE ORDER ---
+# --- PLACE ORDER (with ultra-fast background notifications) ---
 @app.route('/place_order', methods=['POST'])
 def place_order():
     try:
@@ -951,9 +947,12 @@ def place_order():
         # Register customer
         add_or_update_customer(data['name'], data['email'], data['phone'])
 
-        # Send email + SMS
-        qr_target_url = f"http://127.0.0.1:5644/order_history/{order_id}"
-        send_order_email_and_sms(data, order_id, qr_target_url)
+        # --- TRIGGER NOTIFICATIONS IN BACKGROUND (fast) ---
+        qr_target_url = f"{BASE_URL}/order_history/{order_id}"
+        # Start a background thread for email + SMS (including PDF generation)
+        thread = threading.Thread(target=send_order_notifications, args=(data, order_id, qr_target_url))
+        thread.daemon = True
+        thread.start()
 
         return jsonify({"status": "success", "order_id": order_id, "date": data['date']})
     except Exception as e:
@@ -962,14 +961,14 @@ def place_order():
 @app.route('/order_success/<order_id>')
 def order_success_page(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
-    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, settings=SETTINGS)
+    return render_template_string(SUCCESS_TEMPLATE, order=order, order_id=order_id, settings=SETTINGS, BASE_URL=BASE_URL)
 
 @app.route('/order_history/<order_id>')
 def order_product_history_page(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
     if not order:
         return "Order / Product Authenticity Record Not Found", 404
-    return render_template_string(PRODUCT_HISTORY_TEMPLATE, order=order, settings=SETTINGS)
+    return render_template_string(PRODUCT_HISTORY_TEMPLATE, order=order, settings=SETTINGS, BASE_URL=BASE_URL)
 
 @app.route('/track_order')
 def track_order():
@@ -985,21 +984,21 @@ def admin_download_invoice(order_id):
     if not order:
         return "Order not found", 404
     
-    qr_target_url = f"http://127.0.0.1:5644/order_history/{order_id}"
+    qr_target_url = f"{BASE_URL}/order_history/{order_id}"
     
     if REPORTLAB_AVAILABLE:
         pdf_bytes = generate_order_pdf(order, order_id, qr_target_url)
         if pdf_bytes:
             return send_file(io.BytesIO(pdf_bytes), download_name=f"Invoice_{order_id}.pdf", mimetype='application/pdf')
     
-    return render_template_string(HTML_INVOICE_TEMPLATE, order=order, settings=SETTINGS)
+    return render_template_string(HTML_INVOICE_TEMPLATE, order=order, settings=SETTINGS, BASE_URL=BASE_URL)
 
 @app.route('/admin/print_label/<order_id>')
 def admin_print_label(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
     if not order:
         return "Order not found", 404
-    return render_template_string(SHIPPING_LABEL_TEMPLATE, order=order, settings=SETTINGS)
+    return render_template_string(SHIPPING_LABEL_TEMPLATE, order=order, settings=SETTINGS, BASE_URL=BASE_URL)
 
 @app.route('/api/admin/resend_invoice', methods=['POST'])
 def admin_resend_invoice():
@@ -1010,9 +1009,11 @@ def admin_resend_invoice():
         if not order:
             return jsonify({"success": False, "message": "Order not found"}), 404
         
-        full_address = order.get('full_address', '')
-        qr_target_url = f"http://127.0.0.1:5644/order_history/{order_id}"
-        send_order_email_and_sms(order, order_id, qr_target_url)
+        qr_target_url = f"{BASE_URL}/order_history/{order_id}"
+        # Use the new background function
+        thread = threading.Thread(target=send_order_notifications, args=(order, order_id, qr_target_url))
+        thread.daemon = True
+        thread.start()
         return jsonify({"success": True, "message": "Invoice email and SMS initiated successfully."})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -1046,13 +1047,11 @@ def admin_send_broadcast():
     if not message:
         return jsonify({"success": False, "message": "Message cannot be empty"}), 400
 
-    # Send to all customers (email + SMS)
     for customer in CUSTOMERS:
         name = customer.get('name', 'Customer')
         email = customer.get('email')
         phone = customer.get('phone')
 
-        # Email
         try:
             msg = MIMEMultipart('alternative')
             msg['Subject'] = f"📢 Important Update from CHIRANJEEVI"
@@ -1076,7 +1075,6 @@ def admin_send_broadcast():
         except Exception as e:
             print(f"Broadcast email to {email} failed: {e}")
 
-        # SMS
         try:
             sms_msg = f"CHIRANJEEVI: {message[:140]}"
             trigger_async_sms(phone, sms_msg)
@@ -1093,7 +1091,6 @@ def admin_create_coupon():
     discount = data.get('discount', 0)
     if not code or discount <= 0:
         return jsonify({"success": False, "message": "Coupon code and discount (positive) required."}), 400
-    # Check if code already exists
     for c in COUPONS:
         if c['code'] == code:
             return jsonify({"success": False, "message": "Coupon code already exists."}), 400
@@ -1123,7 +1120,7 @@ def admin_toggle_coupon():
 # --- ADMIN PANEL ROUTES ---
 @app.route('/admin')
 def admin_panel():
-    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, settings=SETTINGS, slides=SLIDES, ads=ADS, certifications=CERTIFICATIONS, customers=CUSTOMERS, coupons=COUPONS)
+    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, settings=SETTINGS, slides=SLIDES, ads=ADS, certifications=CERTIFICATIONS, customers=CUSTOMERS, coupons=COUPONS, BASE_URL=BASE_URL)
 
 @app.route('/api/admin/update_status', methods=['POST'])
 def admin_update_status():
@@ -1137,7 +1134,6 @@ def admin_update_status():
             o['status_step'] = step
             new_text = status_map.get(step, "Processing")
             o['status_text'] = new_text
-            # Send email + SMS
             if step == 5:
                 send_refund_email_and_sms(o, o['order_id'], o['amount'])
             else:
@@ -1153,7 +1149,6 @@ def admin_accept_order():
             o['acceptance_status'] = "Accepted"
             o['status_step'] = 1
             o['status_text'] = "Order Placed"
-            # Optionally send acceptance SMS/email? We already send on place_order.
     return jsonify({"success": True})
 
 @app.route('/api/admin/reject_order', methods=['POST'])
@@ -1206,7 +1201,6 @@ def admin_add_product():
     extraction = request.form.get('extraction', 'Cold pressed & hydro-distilled.')
     original_price = request.form.get('original_price')
     
-    # Variants
     sizes = request.form.getlist('variant_size[]')
     prices = request.form.getlist('variant_price[]')
     stocks = request.form.getlist('variant_stock[]')
@@ -1221,7 +1215,6 @@ def admin_add_product():
     if not variants:
         variants = [{"size": "Standard", "price": float(request.form.get('price', 0)), "stock": int(request.form.get('stock', 0))}]
 
-    # Main image
     image_file = request.files.get('image_file')
     if image_file and image_file.filename != '':
         img_bytes = image_file.read()
@@ -1229,7 +1222,6 @@ def admin_add_product():
     else:
         main_image = "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=500&q=80"
 
-    # Media: images and videos (unlimited)
     media = []
     gallery_images = request.files.getlist('gallery_images[]')
     for gf in gallery_images:
@@ -1366,7 +1358,8 @@ def admin_update_logo():
         SETTINGS['logo'] = logo_b64
     return redirect('/admin')
 
-# ==================== UPDATED TEMPLATE – with coupon integration ====================
+# ==================== UPDATED TEMPLATES WITH BASE_URL ====================
+
 TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -4019,7 +4012,7 @@ ADMIN_TEMPLATE = """
 </html>
 """
 
-# --- SUCCESS, HISTORY, SHIPPING, INVOICE templates remain unchanged ---
+# --- SUCCESS, HISTORY, SHIPPING, INVOICE templates (with BASE_URL) ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -4262,7 +4255,7 @@ SHIPPING_LABEL_TEMPLATE = """
         </div>
         <div class="qr-container">
             <div class="qr-text"><strong style="color:#1b4332; display:block; margin-bottom: 2px;">SCAN TO VERIFY BATCH AUTHENTICITY</strong> This QR code links directly to the customer's secure botanical sourcing record, tracing organic harvest geography and ingredients.</div>
-            <img class="qr-image" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://127.0.0.1:5644/order_history/{{ order.order_id }}" alt="QR Code">
+            <img class="qr-image" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={{ BASE_URL }}/order_history/{{ order.order_id }}" alt="QR Code">
         </div>
     </div>
 </body>
@@ -4338,7 +4331,7 @@ HTML_INVOICE_TEMPLATE = """
             </tbody>
         </table>
         <div class="words-box"><span class="words-label">Total Amount (in words):</span><span class="words-value" id="words-text"></span></div>
-        <div class="qr-section"><div class="qr-text"><strong style="color: #1b4332; display: block; margin-bottom: 4px;">SCAN QR CODE FOR BOTANICAL PRODUCT ORIGIN & HISTORY</strong> Scan this code to open your dedicated product certificate page. Displays harvest locations, extraction techniques, and formula details exclusively for your ordered items.</div><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://127.0.0.1:5644/order_history/{{ order.order_id }}" class="qr-img" alt="QR Code"></div>
+        <div class="qr-section"><div class="qr-text"><strong style="color: #1b4332; display: block; margin-bottom: 4px;">SCAN QR CODE FOR BOTANICAL PRODUCT ORIGIN & HISTORY</strong> Scan this code to open your dedicated product certificate page. Displays harvest locations, extraction techniques, and formula details exclusively for your ordered items.</div><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={{ BASE_URL }}/order_history/{{ order.order_id }}" class="qr-img" alt="QR Code"></div>
         <hr class="footer-hr"><div class="footer-grid"><span>Thank you for choosing CHIRANJEEVI .</span><strong>Authorized Signature</strong></div>
     </div>
     <script>
@@ -4370,4 +4363,3 @@ HTML_INVOICE_TEMPLATE = """
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=7784, debug=True)
-
