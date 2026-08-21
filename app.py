@@ -1749,7 +1749,7 @@ TEMPLATE = """
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
                 <img src="{{ settings.logo }}" alt="Logo" class="logo-img" id="header-logo">
-                <div class="logo"><span>Chiranjeevi</span> Adorica Botanicals</div>
+                <div class="logo"><span>Chiranjeevi</span> </div>
             </div>
         </div>
         <div class="cart-icon-container" id="cartTarget" onclick="openCartModal()">
@@ -1997,7 +1997,7 @@ TEMPLATE = """
             </div>
         </div>
         <div class="footer-bottom">
-            &copy; 2026 CHIRANJEEVI. All Rights Reserved. Crafted with pure herbal care.
+            &copy; 2026 CHIRANJEEVI . All Rights Reserved. Crafted with pure herbal care.
         </div>
     </footer>
 
@@ -2113,12 +2113,12 @@ TEMPLATE = """
         const productsData = {{ products | tojson }};
         // Coupons from server
         const couponsData = {{ coupons | tojson }};
-        let cart = JSON.parse(localStorage.getItem('adorica_cart') || '[]');
+        let cart = JSON.parse(localStorage.getItem('CHIRANJEEVI_cart') || '[]');
         let currentCategory = 'All';
         let discountPercent = 0; // will be set by coupon
 
         // ----- ADDRESS MANAGEMENT -----
-        let savedAddresses = JSON.parse(localStorage.getItem('adorica_addresses') || '[]');
+        let savedAddresses = JSON.parse(localStorage.getItem('chiranjeevi_addresses') || '[]');
 
         function populateSavedAddresses() {
             const select = document.getElementById('savedAddressSelect');
@@ -2171,14 +2171,14 @@ TEMPLATE = """
             const exists = savedAddresses.some(a => a.email === addr.email && a.phone === addr.phone);
             if (!exists && addr.name && addr.email && addr.phone) {
                 savedAddresses.push(addr);
-                localStorage.setItem('adorica_addresses', JSON.stringify(savedAddresses));
+                localStorage.setItem('chiranjeevi_addresses', JSON.stringify(savedAddresses));
                 populateSavedAddresses();
             }
-            localStorage.setItem('adorica_last_address', JSON.stringify(addr));
+            localStorage.setItem('CHIRANJEEVI_last_address', JSON.stringify(addr));
         }
 
         function loadLastUsedAddress() {
-            const last = localStorage.getItem('adorica_last_address');
+            const last = localStorage.getItem('CHIRANJEEVI_last_address');
             if (last) {
                 try {
                     const addr = JSON.parse(last);
@@ -2324,7 +2324,7 @@ TEMPLATE = """
             if(existing) { existing.quantity += 1; }
             else { cart.push(cartItem); }
             
-            localStorage.setItem('adorica_cart', JSON.stringify(cart));
+            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
             updateCartUI();
             showToast(`${p.name} added to your basket!`);
 
@@ -2363,7 +2363,7 @@ TEMPLATE = """
                 image: p.image
             };
             cart = [cartItem]; 
-            localStorage.setItem('adorica_cart', JSON.stringify(cart));
+            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
             updateCartUI(); 
             openCartModal(); 
         }
@@ -2462,14 +2462,14 @@ TEMPLATE = """
             if(cart[index].quantity <= 0) {
                 cart.splice(index, 1);
             }
-            localStorage.setItem('adorica_cart', JSON.stringify(cart));
+            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
             updateCartUI();
             showToast("Cart updated successfully");
         }
 
         function removeFromCart(index) {
             cart.splice(index, 1);
-            localStorage.setItem('adorica_cart', JSON.stringify(cart));
+            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
             updateCartUI();
             showToast("Item removed from cart");
         }
@@ -2512,7 +2512,7 @@ TEMPLATE = """
                 image: p.image
             };
             cart.push(cartItem);
-            localStorage.setItem('adorica_cart', JSON.stringify(cart));
+            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
             updateCartUI();
             renderBetterTogether();
             showToast(`${p.name} added instantly!`);
@@ -2683,7 +2683,7 @@ TEMPLATE = """
                 });
                 let data = await response.json();
                 if (data.status === 'success') {
-                    localStorage.removeItem('adorica_cart');
+                    localStorage.removeItem('CHIRANJEEVI_cart');
                     clearAddressForm();
                     activeQrId = null;
                     window.location.href = '/order_success/' + data.order_id;
@@ -2740,7 +2740,7 @@ TEMPLATE = """
                     });
                     let data = await response.json();
                     if (data.status === 'success') {
-                        localStorage.removeItem('adorica_cart');
+                        localStorage.removeItem('CHIRANJEEVI_cart');
                         clearAddressForm();
                         window.location.href = '/order_success/' + data.order_id;
                     } else {
@@ -2820,7 +2820,7 @@ TEMPLATE = """
                             .then(r => r.json())
                             .then(data => {
                                 if (data.status === "success") {
-                                    localStorage.removeItem('adorica_cart');
+                                    localStorage.removeItem('CHIRANJEEVI_cart');
                                     clearAddressForm();
                                     window.location.href = '/order_success/' + data.order_id;
                                 } else {
@@ -2975,7 +2975,7 @@ PRODUCT_DETAIL_TEMPLATE = """
     <header>
         <a href="/" class="brand-container">
             <img src="{{ settings.logo }}" alt="Logo" class="logo-img">
-            <div class="logo"><span>Chiranjeevi</span> Adorica Botanicals</div>
+            <div class="logo"><span>Chiranjeevi</span></div>
         </a>
         <div style="cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%;" onclick="window.location.href='/'">
             <i class="fa-solid fa-house"></i>
@@ -3186,14 +3186,14 @@ PRODUCT_DETAIL_TEMPLATE = """
                 image: product.image
             };
 
-            let existingCart = JSON.parse(localStorage.getItem('adorica_cart') || '[]');
+            let existingCart = JSON.parse(localStorage.getItem('CHIRANJEEVI_cart') || '[]');
             let found = existingCart.find(x => x.id === product.id && x.size === selectedSize);
             if(found) {
                 found.quantity += currentQty;
             } else {
                 existingCart.push(cartItem);
             }
-            localStorage.setItem('adorica_cart', JSON.stringify(existingCart));
+            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(existingCart));
             showToast(`${currentQty} x ${product.name} (${selectedSize}) added to your basket!`);
         }
 
@@ -3212,7 +3212,7 @@ PRODUCT_DETAIL_TEMPLATE = """
                 quantity: currentQty,
                 image: product.image
             };
-            localStorage.setItem('adorica_cart', JSON.stringify([cartItem]));
+            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify([cartItem]));
             window.location.href = '/?openCart=true';
         }
     </script>
@@ -3227,7 +3227,7 @@ ADMIN_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard | CHIRANJEEVI</title>
+    <title>Admin Dashboard | CHIRANJEEVI </title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
