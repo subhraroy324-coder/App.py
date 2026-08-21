@@ -349,7 +349,7 @@ def generate_order_pdf(order_data, order_id, qr_target_url):
             print(f"Logo fetch skipped for PDF: {e}")
 
         center_text_flow = [
-            Paragraph("CHIRANJEEVI THE ADORICA BOTANICALS", title_style),
+            Paragraph("CHIRANJEEVI", title_style),
             Paragraph("Where Nature Meets Care", tagline_style),
             Paragraph("ORDER PRICE INVOICE", invoice_title_style)
         ]
@@ -486,7 +486,7 @@ def generate_order_pdf(order_data, order_id, qr_target_url):
         story.append(Spacer(1, 8))
 
         footer_data = [[
-            Paragraph("<b>Thank you for choosing CHIRANJEEVI THE ADORICA BOTANICALS.</b>", normal_text),
+            Paragraph("<b>Thank you for choosing CHIRANJEEVI.</b>", normal_text),
             Paragraph("Authorized Signature", normal_text)
         ]]
         footer_table = Table(footer_data, colWidths=[360, 180])
@@ -546,8 +546,8 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
         full_address = order_data['full_address']
 
         msg = MIMEMultipart('mixed')
-        msg['Subject'] = f"Order Confirmed & PDF Invoice: {order_id} - CHIRANJEEVI THE ADORICA BOTANICALS"
-        msg['From'] = f"CHIRANJEEVI THE ADORICA BOTANICALS <{SMTP_EMAIL}>"
+        msg['Subject'] = f"Order Confirmed & PDF Invoice: {order_id} - CHIRANJEEVI"
+        msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
         items_html = "".join([f"<li><b>{i['name']}</b> {i.get('size', '')} (Qty: {i.get('quantity', 1)}) - ₹{i['price']}</li>" for i in items])
@@ -556,7 +556,7 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
         <html>
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
             <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
-                <h1 style="font-size: 26px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">CHIRANJEEVI THE ADORICA BOTANICALS</h1>
+                <h1 style="font-size: 26px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">CHIRANJEEVI</h1>
                 <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">Where Nature Meets Care</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
@@ -607,7 +607,7 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
 
     # SMS part
     try:
-        sms_msg = f"CHIRANJEEVI THE ADORICA BOTANICALS: Order {order_id} confirmed! Total ₹{order_data['amount']}. Track at {qr_target_url}. Thank you!"
+        sms_msg = f"CHIRANJEEVI: Order {order_id} confirmed! Total ₹{order_data['amount']}. Track at {qr_target_url}. Thank you!"
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS send error: {e}")
@@ -618,8 +618,8 @@ def send_rejection_email_and_sms(order_data, order_id, amount):
         recipient_email = order_data['email']
         name = order_data['name']
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"Order Cancelled & Refund Initiated: {order_id} - CHIRANJEEVI THE ADORICA BOTANICALS"
-        msg['From'] = f"CHIRANJEEVI THE ADORICA BOTANICALS <{SMTP_EMAIL}>"
+        msg['Subject'] = f"Order Cancelled & Refund Initiated: {order_id} - CHIRANJEEVI"
+        msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
         html_content = f"""
@@ -627,7 +627,7 @@ def send_rejection_email_and_sms(order_data, order_id, amount):
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
             <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
                 <h1 style="font-size: 24px; color: #991b1b; margin-bottom: 5px; font-weight: bold; text-align: center;">Order Cancellation Alert</h1>
-                <p style="letter-spacing: 2px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">CHIRANJEEVI THE ADORICA BOTANICALS</p>
+                <p style="letter-spacing: 2px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">CHIRANJEEVI</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
                 <p style="font-size: 15px; color: #333;">Dear <b>{name}</b>,</p>
@@ -655,7 +655,7 @@ def send_rejection_email_and_sms(order_data, order_id, amount):
 
     # SMS
     try:
-        sms_msg = f"CHIRANJEEVI THE ADORICA BOTANICALS: Order {order_id} cancelled. Refund of ₹{amount} initiated. Track: http://127.0.0.1:5644/order_success/{order_id}"
+        sms_msg = f"CHIRANJEEVI: Order {order_id} cancelled. Refund of ₹{amount} initiated. Track: http://127.0.0.1:5644/order_success/{order_id}"
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS reject error: {e}")
@@ -666,8 +666,8 @@ def send_refund_email_and_sms(order_data, order_id, amount):
         recipient_email = order_data['email']
         name = order_data['name']
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"Refund Processed for Order {order_id} - CHIRANJEEVI THE ADORICA BOTANICALS"
-        msg['From'] = f"CHIRANJEEVI THE ADORICA BOTANICALS <{SMTP_EMAIL}>"
+        msg['Subject'] = f"Refund Processed for Order {order_id} - CHIRANJEEVI"
+        msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
         html_content = f"""
@@ -675,7 +675,7 @@ def send_refund_email_and_sms(order_data, order_id, amount):
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
             <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
                 <h1 style="font-size: 24px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">Refund Confirmed</h1>
-                <p style="letter-spacing: 2px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">CHIRANJEEVI THE ADORICA BOTANICALS</p>
+                <p style="letter-spacing: 2px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">CHIRANJEEVI</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
                 <p style="font-size: 15px; color: #333;">Dear <b>{name}</b>,</p>
@@ -703,7 +703,7 @@ def send_refund_email_and_sms(order_data, order_id, amount):
 
     # SMS
     try:
-        sms_msg = f"CHIRANJEEVI THE ADORICA BOTANICALS: Refund of ₹{amount} for order {order_id} has been processed. It will reflect in 2-3 days."
+        sms_msg = f"CHIRANJEEVI: Refund of ₹{amount} for order {order_id} has been processed. It will reflect in 2-3 days."
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS refund error: {e}")
@@ -714,41 +714,41 @@ def send_status_update_email_and_sms(order_data, order_id, step, status_text):
         recipient_email = order_data['email']
         name = order_data['name']
         msg = MIMEMultipart('alternative')
-        msg['From'] = f"CHIRANJEEVI THE ADORICA BOTANICALS <{SMTP_EMAIL}>"
+        msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
         track_url = f"{public_base_url()}/order_success/{order_id}"
 
         if step == 2:
-            subject = f"📦 Packaging Completed: Order {order_id} - CHIRANJEEVI THE ADORICA BOTANICALS"
+            subject = f"📦 Packaging Completed: Order {order_id} - CHIRANJEEVI"
             status_heading = "Packaging Completed & Ready for Dispatch"
             status_msg = f"Great news, <b>{name}</b>! The packaging for your order <b>{order_id}</b> has been completed with extreme botanical care. Your products are sanitized, securely sealed, and ready for courier pickup."
             badge_bg = "#fff8e1"
             badge_border = "#f59e0b"
             badge_text_color = "#b45309"
         elif step == 3:
-            subject = f"🚚 Order Shipped: {order_id} is On Its Way! - CHIRANJEEVI THE ADORICA BOTANICALS"
+            subject = f"🚚 Order Shipped: {order_id} is On Its Way! - CHIRANJEEVI"
             status_heading = "Order Dispatched & In Transit"
             status_msg = f"Exciting news, <b>{name}</b>! Your order <b>{order_id}</b> has been shipped. Our courier partner has picked up your package and it is currently on its way to your shipping address."
             badge_bg = "#ede7f6"
             badge_border = "#7c3aed"
             badge_text_color = "#5b21b6"
         elif step == 4:
-            subject = f"🎉 Order Delivered: {order_id} - CHIRANJEEVI THE ADORICA BOTANICALS"
+            subject = f"🎉 Order Delivered: {order_id} - CHIRANJEEVI"
             status_heading = "Order Delivered Successfully"
             status_msg = f"Wonderful news, <b>{name}</b>! Your order <b>{order_id}</b> has been delivered. We hope you enjoy your pure botanical remedies!"
             badge_bg = "#f0fdf4"
             badge_border = "#22c55e"
             badge_text_color = "#166534"
         elif step == 5:
-            subject = f"💵 Refund Processed: {order_id} - CHIRANJEEVI THE ADORICA BOTANICALS"
+            subject = f"💵 Refund Processed: {order_id} - CHIRANJEEVI"
             status_heading = "Refund Completed"
             status_msg = f"Dear <b>{name}</b>, your order <b>{order_id}</b> has been refunded. The amount will be credited back to your payment method shortly."
             badge_bg = "#fef9c3"
             badge_border = "#eab308"
             badge_text_color = "#854d0e"
         else:
-            subject = f"Order Status Update: {order_id} - CHIRANJEEVI THE ADORICA BOTANICALS"
+            subject = f"Order Status Update: {order_id} - CHIRANJEEVI"
             status_heading = f"Status: {status_text}"
             status_msg = f"Dear <b>{name}</b>, your order <b>{order_id}</b> status has been updated to {status_text}."
             badge_bg = "#e3f2fd"
@@ -761,7 +761,7 @@ def send_status_update_email_and_sms(order_data, order_id, step, status_text):
         <html>
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
             <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
-                <h1 style="font-size: 24px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">CHIRANJEEVI THE ADORICA BOTANICALS</h1>
+                <h1 style="font-size: 24px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">CHIRANJEEVI</h1>
                 <p style="letter-spacing: 2px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">Where Nature Meets Care</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
@@ -792,7 +792,7 @@ def send_status_update_email_and_sms(order_data, order_id, step, status_text):
     try:
         status_map = {1: "Placed", 2: "Packaging", 3: "Shipped", 4: "Delivered", 5: "Refunded"}
         step_text = status_map.get(step, status_text)
-        sms_msg = f"CHIRANJEEVI THE ADORICA BOTANICALS: Order {order_id} status: {step_text}. Track: http://127.0.0.1:5644/order_success/{order_id}"
+        sms_msg = f"CHIRANJEEVI: Order {order_id} status: {step_text}. Track: http://127.0.0.1:5644/order_success/{order_id}"
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS status error: {e}")
@@ -1065,8 +1065,8 @@ def admin_send_broadcast():
         # Email
         try:
             msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"📢 Important Update from CHIRANJEEVI THE ADORICA BOTANICALS"
-            msg['From'] = f"CHIRANJEEVI THE ADORICA BOTANICALS <{SMTP_EMAIL}>"
+            msg['Subject'] = f"📢 Important Update from CHIRANJEEVI"
+            msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
             msg['To'] = email
 
             html_content = f"""
@@ -1076,7 +1076,7 @@ def admin_send_broadcast():
                     <h2 style="color: #1b4332;">Hello {name},</h2>
                     <p style="font-size: 15px; line-height: 1.6;">{message}</p>
                     <br>
-                    <p style="font-size: 13px; color: #777;">— CHIRANJEEVI THE ADORICA BOTANICALS Team</p>
+                    <p style="font-size: 13px; color: #777;">— CHIRANJEEVI Team</p>
                 </div>
             </body>
             </html>
@@ -1088,7 +1088,7 @@ def admin_send_broadcast():
 
         # SMS
         try:
-            sms_msg = f"CHIRANJEEVI THE ADORICA BOTANICALS: {message[:140]}"
+            sms_msg = f"CHIRANJEEVI: {message[:140]}"
             trigger_async_sms(phone, sms_msg)
         except Exception as e:
             print(f"Broadcast SMS to {phone} failed: {e}")
@@ -1383,7 +1383,7 @@ TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CHIRANJEEVI THE ADORICA BOTANICALS | Pure Herbal & Botanical Solutions</title>
+    <title>CHIRANJEEVI | Pure Herbal & Botanical Solutions</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
@@ -1749,7 +1749,7 @@ TEMPLATE = """
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
                 <img src="{{ settings.logo }}" alt="Logo" class="logo-img" id="header-logo">
-                <div class="logo"><span> Chiranjeevi</span> The Adorica Botanicals</div>
+                <div class="logo"><span>Chiranjeevi</span> Adorica Botanicals</div>
             </div>
         </div>
         <div class="cart-icon-container" id="cartTarget" onclick="openCartModal()">
@@ -1978,7 +1978,7 @@ TEMPLATE = """
     <footer class="main-footer">
         <div class="footer-grid">
             <div>
-                <h3>CHIRANJEEVI THE ADORICA BOTANICALS</h3>
+                <h3>CHIRANJEEVI</h3>
                 <p style="font-size: 13px; line-height: 1.7; color: #ddd;">Helping you reach the peak of your physical, mental, and spiritual well-being — nurturing harmony within, inspiring conscious living, and connecting you with the healing essence of nature..</p>
             </div>
             <div>
@@ -1997,7 +1997,7 @@ TEMPLATE = """
             </div>
         </div>
         <div class="footer-bottom">
-            &copy; 2026 CHIRANJEEVI THE ADORICA BOTANICALS. All Rights Reserved. Crafted with pure herbal care.
+            &copy; 2026 CHIRANJEEVI. All Rights Reserved. Crafted with pure herbal care.
         </div>
     </footer>
 
@@ -2094,7 +2094,7 @@ TEMPLATE = """
                 <div style="background: white; border: 2.5px solid var(--accent-gold); display: inline-block; padding: 20px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); margin-bottom: 15px;">
                     <img id="checkout-qr-image" style="width: 300px; height: 300px; object-fit: contain; margin: 0 auto;" alt="Dynamic UPI QR Code">
                 </div>
-                <h3 id="checkout-qr-brand" style="color:var(--green-primary); font-size:16px; font-weight:700; margin-bottom:4px;">CHIRANJEEVI THE ADORICA BOTANICALS</h3>
+                <h3 id="checkout-qr-brand" style="color:var(--green-primary); font-size:16px; font-weight:700; margin-bottom:4px;">CHIRANJEEVI</h3>
                 <p id="checkout-qr-amount" style="font-size:22px; font-weight:800; color:var(--green-light); margin-bottom:15px;"></p>
                 <div style="display:flex; align-items:center; justify-content:center; gap:8px; background:rgba(27,67,50,0.08); padding:10px; border-radius:10px; margin-bottom:15px;">
                     <i class="fa-solid fa-circle-notch fa-spin" style="color:var(--green-primary);"></i>
@@ -2796,7 +2796,7 @@ TEMPLATE = """
                         "key": rzData.key_id,
                         "amount": rzData.amount,
                         "currency": "INR",
-                        "name": "CHIRANJEEVI THE ADORICA BOTANICALS",
+                        "name": "CHIRANJEEVI",
                         "description": "Pure Botanical Products Purchase",
                         "image": "{{ settings.logo }}",
                         "order_id": rzData.razorpay_order_id,
@@ -2898,7 +2898,7 @@ PRODUCT_DETAIL_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ product.name }} | CHIRANJEEVI THE ADORICA BOTANICALS</title>
+    <title>{{ product.name }} | CHIRANJEEVI</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
@@ -2975,7 +2975,7 @@ PRODUCT_DETAIL_TEMPLATE = """
     <header>
         <a href="/" class="brand-container">
             <img src="{{ settings.logo }}" alt="Logo" class="logo-img">
-            <div class="logo"><span> Chiranjeevi</span> The Adorica Botanicals</div>
+            <div class="logo"><span>Chiranjeevi</span> Adorica Botanicals</div>
         </a>
         <div style="cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%;" onclick="window.location.href='/'">
             <i class="fa-solid fa-house"></i>
@@ -3227,7 +3227,7 @@ ADMIN_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard | CHIRANJEEVI THE ADORICA BOTANICALS</title>
+    <title>Admin Dashboard | CHIRANJEEVI</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -3340,7 +3340,7 @@ ADMIN_TEMPLATE = """
     <div class="admin-content" id="adminContent">
         <div class="admin-topbar">
             <button class="admin-menu-toggle" onclick="toggleAdminSidebar()"><i class="fa-solid fa-bars"></i></button>
-            <span style="font-weight: 600; color: var(--green-primary); font-size: 15px;">CHIRANJEEVI THE ADORICA BOTANICALS - Management Dashboard</span>
+            <span style="font-weight: 600; color: var(--green-primary); font-size: 15px;">CHIRANJEEVI - Management Dashboard</span>
         </div>
 
         <!-- Orders Tab -->
@@ -4036,7 +4036,7 @@ SUCCESS_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Status | CHIRANJEEVI THE ADORICA BOTANICALS</title>
+    <title>Order Status | CHIRANJEEVI</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -4085,7 +4085,7 @@ SUCCESS_TEMPLATE = """
         {% else %}
             <div class="icon-box"><i class="fa-solid fa-check"></i></div>
             <h1>Order Confirmed Successfully!</h1>
-            <p class="subtitle">Thank you for choosing CHIRANJEEVI THE ADORICA BOTANICALS. Track your live shipment status below.</p>
+            <p class="subtitle">Thank you for choosing CHIRANJEEVI. Track your live shipment status below.</p>
             {% if order %}
             <div class="tracker-container">
                 <div class="tracker-step {% if order.status_step >= 1 %}active{% endif %}">
@@ -4196,7 +4196,7 @@ PRODUCT_HISTORY_TEMPLATE = """
         </div>
         {% endfor %}
         <div class="cert-footer">
-            <p><i class="fa-solid fa-shield-halved"></i> Verified by CHIRANJEEVI THE ADORICA BOTANICALS Quality Control Laboratory.</p>
+            <p><i class="fa-solid fa-shield-halved"></i> Verified by CHIRANJEEVI Quality Control Laboratory.</p>
             <p style="margin-top:4px;">100% Organic • Cruelty-Free • Zero Paraben Formulation</p>
         </div>
     </div>
@@ -4349,7 +4349,7 @@ HTML_INVOICE_TEMPLATE = """
         </table>
         <div class="words-box"><span class="words-label">Total Amount (in words):</span><span class="words-value" id="words-text"></span></div>
         <div class="qr-section"><div class="qr-text"><strong style="color: #1b4332; display: block; margin-bottom: 4px;">SCAN QR CODE FOR BOTANICAL PRODUCT ORIGIN & HISTORY</strong> Scan this code to open your dedicated product certificate page. Displays harvest locations, extraction techniques, and formula details exclusively for your ordered items.</div><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={{ request.url_root.rstrip('/') }}/order_history/{{ order.order_id }}" class="qr-img" alt="QR Code"></div>
-        <hr class="footer-hr"><div class="footer-grid"><span>Thank you for choosing CHIRANJEEVI THE ADORICA BOTANICALS.</span><strong>Authorized Signature</strong></div>
+        <hr class="footer-hr"><div class="footer-grid"><span>Thank you for choosing CHIRANJEEVI.</span><strong>Authorized Signature</strong></div>
     </div>
     <script>
         function numToWordsINR(amount) {
