@@ -1749,7 +1749,7 @@ TEMPLATE = """
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
                 <img src="{{ settings.logo }}" alt="Logo" class="logo-img" id="header-logo">
-                <div class="logo"><span>The Chiranjeevi</span> Adorica Botanicals</div>
+                <div class="logo"><span> Chiranjeevi</span> The Adorica Botanicals</div>
             </div>
         </div>
         <div class="cart-icon-container" id="cartTarget" onclick="openCartModal()">
@@ -2975,7 +2975,7 @@ PRODUCT_DETAIL_TEMPLATE = """
     <header>
         <a href="/" class="brand-container">
             <img src="{{ settings.logo }}" alt="Logo" class="logo-img">
-            <div class="logo"><span>The Chiranjeevi</span> Adorica Botanicals</div>
+            <div class="logo"><span> Chiranjeevi</span> The Adorica Botanicals</div>
         </a>
         <div style="cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%;" onclick="window.location.href='/'">
             <i class="fa-solid fa-house"></i>
