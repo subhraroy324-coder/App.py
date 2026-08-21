@@ -37,7 +37,7 @@ except Exception as e:
     REPORTLAB_AVAILABLE = False
 
 app = Flask(__name__)
-app.secret_key = 'chiranjeevi_secure_key_2026'
+app.secret_key = 'chiranjeevi_adorica_botanicals_secure_key_2026'
 
 # --- RAZORPAY CONFIGURATION ---
 RAZORPAY_KEY_ID = "rzp_live_TNBc6IiPsiAkOD"
@@ -537,7 +537,7 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
 
         msg = MIMEMultipart('mixed')
         msg['Subject'] = f"Order Confirmed & PDF Invoice: {order_id} - CHIRANJEEVI"
-        msg['From'] = f"CHIRANJEEVI THE <{SMTP_EMAIL}>"
+        msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
         items_html = "".join([f"<li><b>{i['name']}</b> {i.get('size', '')} (Qty: {i.get('quantity', 1)}) - ₹{i['price']}</li>" for i in items])
@@ -546,7 +546,7 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
         <html>
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
             <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
-                <h1 style="font-size: 26px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">CHIRANJEEVI THE</h1>
+                <h1 style="font-size: 26px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">CHIRANJEEVI</h1>
                 <p style="letter-spacing: 3px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">Where Nature Meets Care</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
@@ -597,7 +597,7 @@ def send_order_email_and_sms(order_data, order_id, qr_target_url):
 
     # SMS part
     try:
-        sms_msg = f"CHIRANJEEVI THE: Order {order_id} confirmed! Total ₹{order_data['amount']}. Track at {qr_target_url}. Thank you!"
+        sms_msg = f"CHIRANJEEVI: Order {order_id} confirmed! Total ₹{order_data['amount']}. Track at {qr_target_url}. Thank you!"
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS send error: {e}")
@@ -609,7 +609,7 @@ def send_rejection_email_and_sms(order_data, order_id, amount):
         name = order_data['name']
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f"Order Cancelled & Refund Initiated: {order_id} - CHIRANJEEVI"
-        msg['From'] = f"CHIRANJEEVI THE <{SMTP_EMAIL}>"
+        msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
         html_content = f"""
@@ -665,7 +665,7 @@ def send_refund_email_and_sms(order_data, order_id, amount):
         <body style="font-family: 'Poppins', 'Arial', sans-serif; background-color: #FAF7F0; padding: 40px 20px; text-align: center; color: #2b2b2b;">
             <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left;">
                 <h1 style="font-size: 24px; color: #1b4332; margin-bottom: 5px; font-weight: bold; text-align: center;">Refund Confirmed</h1>
-                <p style="letter-spacing: 2px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">CHIRANJEEVI </p>
+                <p style="letter-spacing: 2px; color: #d4a373; text-transform: uppercase; font-size: 11px; font-weight: bold; margin-top: 0; text-align: center;">CHIRANJEEVI</p>
                 <hr style="border: 0; border-top: 2px solid #F3EFEA; margin: 25px 0;">
                 
                 <p style="font-size: 15px; color: #333;">Dear <b>{name}</b>,</p>
@@ -693,7 +693,7 @@ def send_refund_email_and_sms(order_data, order_id, amount):
 
     # SMS
     try:
-        sms_msg = f"CHIRANJEEVI THE: Refund of ₹{amount} for order {order_id} has been processed. It will reflect in 2-3 days."
+        sms_msg = f"CHIRANJEEVI: Refund of ₹{amount} for order {order_id} has been processed. It will reflect in 2-3 days."
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS refund error: {e}")
@@ -704,10 +704,10 @@ def send_status_update_email_and_sms(order_data, order_id, step, status_text):
         recipient_email = order_data['email']
         name = order_data['name']
         msg = MIMEMultipart('alternative')
-        msg['From'] = f"CHIRANJEEVI THE <{SMTP_EMAIL}>"
+        msg['From'] = f"CHIRANJEEVI <{SMTP_EMAIL}>"
         msg['To'] = recipient_email
 
-        track_url = f"http://127.0.0.1:5644/order_success/{order_id}"
+        track_url = f"www.chiranjeevi.shop/order_success/{order_id}"
 
         if step == 2:
             subject = f"📦 Packaging Completed: Order {order_id} - CHIRANJEEVI"
@@ -782,7 +782,7 @@ def send_status_update_email_and_sms(order_data, order_id, step, status_text):
     try:
         status_map = {1: "Placed", 2: "Packaging", 3: "Shipped", 4: "Delivered", 5: "Refunded"}
         step_text = status_map.get(step, status_text)
-        sms_msg = f"CHIRANJEEVI: Order {order_id} status: {step_text}. Track: http://127.0.0.1:5644/order_success/{order_id}"
+        sms_msg = f"CHIRANJEEVI: Order {order_id} status: {step_text}. Track: www.chiranjeevi.shop/order_success/{order_id}"
         trigger_async_sms(order_data['phone'], sms_msg)
     except Exception as e:
         print(f"SMS status error: {e}")
@@ -952,7 +952,7 @@ def place_order():
         add_or_update_customer(data['name'], data['email'], data['phone'])
 
         # Send email + SMS
-        qr_target_url = f"http://127.0.0.1:5644/order_history/{order_id}"
+        qr_target_url = f"www.chiranjeevi.shop/order_history/{order_id}"
         send_order_email_and_sms(data, order_id, qr_target_url)
 
         return jsonify({"status": "success", "order_id": order_id, "date": data['date']})
@@ -985,7 +985,7 @@ def admin_download_invoice(order_id):
     if not order:
         return "Order not found", 404
     
-    qr_target_url = f"http://127.0.0.1:5644/order_history/{order_id}"
+    qr_target_url = f"www.chiranjeevi.shop/order_history/{order_id}"
     
     if REPORTLAB_AVAILABLE:
         pdf_bytes = generate_order_pdf(order, order_id, qr_target_url)
@@ -1011,7 +1011,7 @@ def admin_resend_invoice():
             return jsonify({"success": False, "message": "Order not found"}), 404
         
         full_address = order.get('full_address', '')
-        qr_target_url = f"http://127.0.0.1:5644/order_history/{order_id}"
+        qr_target_url = f"www.chiranjeevi.shop/order_history/{order_id}"
         send_order_email_and_sms(order, order_id, qr_target_url)
         return jsonify({"success": True, "message": "Invoice email and SMS initiated successfully."})
     except Exception as e:
@@ -1078,7 +1078,7 @@ def admin_send_broadcast():
 
         # SMS
         try:
-            sms_msg = f"CHIRANJEEVI THE: {message[:140]}"
+            sms_msg = f"CHIRANJEEVI: {message[:140]}"
             trigger_async_sms(phone, sms_msg)
         except Exception as e:
             print(f"Broadcast SMS to {phone} failed: {e}")
@@ -1373,7 +1373,7 @@ TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CHIRANJEEVI THE | Pure Herbal & Botanical Solutions</title>
+    <title>CHIRANJEEVI | Pure Herbal & Botanical Solutions</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
@@ -1739,7 +1739,7 @@ TEMPLATE = """
             <button class="menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
             <div class="brand-container" onclick="window.scrollTo(0,0)">
                 <img src="{{ settings.logo }}" alt="Logo" class="logo-img" id="header-logo">
-                <div class="logo"><span>Chiranjeevi</span></div>
+                <div class="logo"><span>CHIRANJEEVI</span></div>
             </div>
         </div>
         <div class="cart-icon-container" id="cartTarget" onclick="openCartModal()">
@@ -2084,7 +2084,7 @@ TEMPLATE = """
                 <div style="background: white; border: 2.5px solid var(--accent-gold); display: inline-block; padding: 20px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); margin-bottom: 15px;">
                     <img id="checkout-qr-image" style="width: 300px; height: 300px; object-fit: contain; margin: 0 auto;" alt="Dynamic UPI QR Code">
                 </div>
-                <h3 id="checkout-qr-brand" style="color:var(--green-primary); font-size:16px; font-weight:700; margin-bottom:4px;">CHIRANJEEVI </h3>
+                <h3 id="checkout-qr-brand" style="color:var(--green-primary); font-size:16px; font-weight:700; margin-bottom:4px;">CHIRANJEEVI</h3>
                 <p id="checkout-qr-amount" style="font-size:22px; font-weight:800; color:var(--green-light); margin-bottom:15px;"></p>
                 <div style="display:flex; align-items:center; justify-content:center; gap:8px; background:rgba(27,67,50,0.08); padding:10px; border-radius:10px; margin-bottom:15px;">
                     <i class="fa-solid fa-circle-notch fa-spin" style="color:var(--green-primary);"></i>
@@ -2103,12 +2103,12 @@ TEMPLATE = """
         const productsData = {{ products | tojson }};
         // Coupons from server
         const couponsData = {{ coupons | tojson }};
-        let cart = JSON.parse(localStorage.getItem('_cart') || '[]');
+        let cart = JSON.parse(localStorage.getItem('adorica_cart') || '[]');
         let currentCategory = 'All';
         let discountPercent = 0; // will be set by coupon
 
         // ----- ADDRESS MANAGEMENT -----
-        let savedAddresses = JSON.parse(localStorage.getItem('CHIRANJEEVI_addresses') || '[]');
+        let savedAddresses = JSON.parse(localStorage.getItem('adorica_addresses') || '[]');
 
         function populateSavedAddresses() {
             const select = document.getElementById('savedAddressSelect');
@@ -2161,14 +2161,14 @@ TEMPLATE = """
             const exists = savedAddresses.some(a => a.email === addr.email && a.phone === addr.phone);
             if (!exists && addr.name && addr.email && addr.phone) {
                 savedAddresses.push(addr);
-                localStorage.setItem('CHIRANJEEVI_addresses', JSON.stringify(savedAddresses));
+                localStorage.setItem('adorica_addresses', JSON.stringify(savedAddresses));
                 populateSavedAddresses();
             }
-            localStorage.setItem('CHIRANJEEVI_last_address', JSON.stringify(addr));
+            localStorage.setItem('adorica_last_address', JSON.stringify(addr));
         }
 
         function loadLastUsedAddress() {
-            const last = localStorage.getItem('CHIRANJEEVI_last_address');
+            const last = localStorage.getItem('adorica_last_address');
             if (last) {
                 try {
                     const addr = JSON.parse(last);
@@ -2314,7 +2314,7 @@ TEMPLATE = """
             if(existing) { existing.quantity += 1; }
             else { cart.push(cartItem); }
             
-            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
+            localStorage.setItem('adorica_cart', JSON.stringify(cart));
             updateCartUI();
             showToast(`${p.name} added to your basket!`);
 
@@ -2353,7 +2353,7 @@ TEMPLATE = """
                 image: p.image
             };
             cart = [cartItem]; 
-            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
+            localStorage.setItem('adorica_cart', JSON.stringify(cart));
             updateCartUI(); 
             openCartModal(); 
         }
@@ -2452,14 +2452,14 @@ TEMPLATE = """
             if(cart[index].quantity <= 0) {
                 cart.splice(index, 1);
             }
-            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
+            localStorage.setItem('adorica_cart', JSON.stringify(cart));
             updateCartUI();
             showToast("Cart updated successfully");
         }
 
         function removeFromCart(index) {
             cart.splice(index, 1);
-            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
+            localStorage.setItem('adorica_cart', JSON.stringify(cart));
             updateCartUI();
             showToast("Item removed from cart");
         }
@@ -2502,7 +2502,7 @@ TEMPLATE = """
                 image: p.image
             };
             cart.push(cartItem);
-            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(cart));
+            localStorage.setItem('adorica_cart', JSON.stringify(cart));
             updateCartUI();
             renderBetterTogether();
             showToast(`${p.name} added instantly!`);
@@ -2673,7 +2673,7 @@ TEMPLATE = """
                 });
                 let data = await response.json();
                 if (data.status === 'success') {
-                    localStorage.removeItem('CHIRANJEEVI_cart');
+                    localStorage.removeItem('adorica_cart');
                     clearAddressForm();
                     activeQrId = null;
                     window.location.href = '/order_success/' + data.order_id;
@@ -2730,7 +2730,7 @@ TEMPLATE = """
                     });
                     let data = await response.json();
                     if (data.status === 'success') {
-                        localStorage.removeItem('CHIRANJEEVI_cart');
+                        localStorage.removeItem('adorica_cart');
                         clearAddressForm();
                         window.location.href = '/order_success/' + data.order_id;
                     } else {
@@ -2810,7 +2810,7 @@ TEMPLATE = """
                             .then(r => r.json())
                             .then(data => {
                                 if (data.status === "success") {
-                                    localStorage.removeItem('CHIRANJEEVI_cart');
+                                    localStorage.removeItem('adorica_cart');
                                     clearAddressForm();
                                     window.location.href = '/order_success/' + data.order_id;
                                 } else {
@@ -2888,7 +2888,7 @@ PRODUCT_DETAIL_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ product.name }} | CHIRANJEEVI </title>
+    <title>{{ product.name }} | CHIRANJEEVI</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
@@ -2965,7 +2965,7 @@ PRODUCT_DETAIL_TEMPLATE = """
     <header>
         <a href="/" class="brand-container">
             <img src="{{ settings.logo }}" alt="Logo" class="logo-img">
-            <div class="logo"><span>Chiranjeevi</span> </div>
+            <div class="logo"><span>CHIRANJEEVI</span></div>
         </a>
         <div style="cursor: pointer; font-size: 18px; color: var(--green-primary); background: var(--cream-dark); padding: 10px 14px; border-radius: 50%;" onclick="window.location.href='/'">
             <i class="fa-solid fa-house"></i>
@@ -3176,14 +3176,14 @@ PRODUCT_DETAIL_TEMPLATE = """
                 image: product.image
             };
 
-            let existingCart = JSON.parse(localStorage.getItem('CHIRANJEEVI_cart') || '[]');
+            let existingCart = JSON.parse(localStorage.getItem('adorica_cart') || '[]');
             let found = existingCart.find(x => x.id === product.id && x.size === selectedSize);
             if(found) {
                 found.quantity += currentQty;
             } else {
                 existingCart.push(cartItem);
             }
-            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify(existingCart));
+            localStorage.setItem('adorica_cart', JSON.stringify(existingCart));
             showToast(`${currentQty} x ${product.name} (${selectedSize}) added to your basket!`);
         }
 
@@ -3202,7 +3202,7 @@ PRODUCT_DETAIL_TEMPLATE = """
                 quantity: currentQty,
                 image: product.image
             };
-            localStorage.setItem('CHIRANJEEVI_cart', JSON.stringify([cartItem]));
+            localStorage.setItem('adorica_cart', JSON.stringify([cartItem]));
             window.location.href = '/?openCart=true';
         }
     </script>
@@ -4262,7 +4262,7 @@ SHIPPING_LABEL_TEMPLATE = """
         </div>
         <div class="qr-container">
             <div class="qr-text"><strong style="color:#1b4332; display:block; margin-bottom: 2px;">SCAN TO VERIFY BATCH AUTHENTICITY</strong> This QR code links directly to the customer's secure botanical sourcing record, tracing organic harvest geography and ingredients.</div>
-            <img class="qr-image" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://127.0.0.1:5644/order_history/{{ order.order_id }}" alt="QR Code">
+            <img class="qr-image" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=www.chiranjeevi.shop/order_history/{{ order.order_id }}" alt="QR Code">
         </div>
     </div>
 </body>
@@ -4338,7 +4338,7 @@ HTML_INVOICE_TEMPLATE = """
             </tbody>
         </table>
         <div class="words-box"><span class="words-label">Total Amount (in words):</span><span class="words-value" id="words-text"></span></div>
-        <div class="qr-section"><div class="qr-text"><strong style="color: #1b4332; display: block; margin-bottom: 4px;">SCAN QR CODE FOR BOTANICAL PRODUCT ORIGIN & HISTORY</strong> Scan this code to open your dedicated product certificate page. Displays harvest locations, extraction techniques, and formula details exclusively for your ordered items.</div><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://127.0.0.1:5644/order_history/{{ order.order_id }}" class="qr-img" alt="QR Code"></div>
+        <div class="qr-section"><div class="qr-text"><strong style="color: #1b4332; display: block; margin-bottom: 4px;">SCAN QR CODE FOR BOTANICAL PRODUCT ORIGIN & HISTORY</strong> Scan this code to open your dedicated product certificate page. Displays harvest locations, extraction techniques, and formula details exclusively for your ordered items.</div><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=www.chiranjeevi.shopwww.chiranjeevi.shop/order_history/{{ order.order_id }}" class="qr-img" alt="QR Code"></div>
         <hr class="footer-hr"><div class="footer-grid"><span>Thank you for choosing CHIRANJEEVI.</span><strong>Authorized Signature</strong></div>
     </div>
     <script>
