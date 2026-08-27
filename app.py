@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, send_file
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for, send_file, session
 import json
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -17,6 +17,7 @@ import threading
 from collections import defaultdict
 import razorpay
 import requests  # <-- for SMS API
+from functools import wraps
 
 # --- REPORTLAB PDF LIBRARIES ---
 try:
@@ -38,6 +39,10 @@ except Exception as e:
 
 app = Flask(__name__)
 app.secret_key = 'chiranjeevi_adorica_botanicals_secure_key_2026'
+
+# --- ADMIN CREDENTIALS ---
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "chiranjeevi2026"
 
 # --- RAZORPAY CONFIGURATION ---
 RAZORPAY_KEY_ID = "rzp_live_TNBc6IiPsiAkOD"
@@ -184,6 +189,9 @@ CERTIFICATIONS = [
     {"name": "Shopify", "logo": "https://example.com/shopify.png", "link": "#"}
 ]
 
+# --- DYNAMIC CATEGORIES (admin manageable) ---
+CATEGORIES = ["Apparel", "Fragrance", "Skin Care", "Hair Care", "Oil", "Shampoo"]
+
 # --- SECURITY GUARD ---
 @app.before_request
 def security_and_ddos_guard():
@@ -209,6 +217,15 @@ def inject_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-XSS-Protection'] = '1; mode=block'
     return response
+
+# --- ADMIN AUTH DECORATOR ---
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('admin_logged_in'):
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 # --- SMS SENDING FUNCTION ---
 def send_sms(phone, message):
@@ -980,6 +997,7 @@ def track_order():
     return jsonify({"found": False})
 
 @app.route('/admin/download_invoice/<order_id>')
+@admin_required
 def admin_download_invoice(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
     if not order:
@@ -995,6 +1013,7 @@ def admin_download_invoice(order_id):
     return render_template_string(HTML_INVOICE_TEMPLATE, order=order, settings=SETTINGS)
 
 @app.route('/admin/print_label/<order_id>')
+@admin_required
 def admin_print_label(order_id):
     order = next((o for o in ORDERS if o['order_id'] == order_id), None)
     if not order:
@@ -1002,6 +1021,7 @@ def admin_print_label(order_id):
     return render_template_string(SHIPPING_LABEL_TEMPLATE, order=order, settings=SETTINGS)
 
 @app.route('/api/admin/resend_invoice', methods=['POST'])
+@admin_required
 def admin_resend_invoice():
     try:
         data = request.get_json() or {}
@@ -1019,6 +1039,7 @@ def admin_resend_invoice():
 
 # --- CERTIFICATIONS ADMIN ROUTES ---
 @app.route('/api/admin/add_certification', methods=['POST'])
+@admin_required
 def admin_add_certification():
     data = request.get_json() or {}
     name = data.get('name', '').strip()
@@ -1030,6 +1051,7 @@ def admin_add_certification():
     return jsonify({"success": True})
 
 @app.route('/api/admin/delete_certification', methods=['POST'])
+@admin_required
 def admin_delete_certification():
     data = request.get_json() or {}
     idx = data.get('index')
@@ -1040,6 +1062,7 @@ def admin_delete_certification():
 
 # --- BROADCAST MESSAGE (ADMIN) ---
 @app.route('/api/admin/send_broadcast', methods=['POST'])
+@admin_required
 def admin_send_broadcast():
     data = request.get_json() or {}
     message = data.get('message', '').strip()
@@ -1087,6 +1110,7 @@ def admin_send_broadcast():
 
 # --- COUPON MANAGEMENT (ADMIN) ---
 @app.route('/api/admin/create_coupon', methods=['POST'])
+@admin_required
 def admin_create_coupon():
     data = request.get_json() or {}
     code = data.get('code', '').strip().upper()
@@ -1101,6 +1125,7 @@ def admin_create_coupon():
     return jsonify({"success": True, "message": f"Coupon {code} created with {discount}% discount."})
 
 @app.route('/api/admin/delete_coupon', methods=['POST'])
+@admin_required
 def admin_delete_coupon():
     data = request.get_json() or {}
     code = data.get('code', '').strip().upper()
@@ -1111,6 +1136,7 @@ def admin_delete_coupon():
     return jsonify({"success": False, "message": "Coupon not found."}), 404
 
 @app.route('/api/admin/toggle_coupon', methods=['POST'])
+@admin_required
 def admin_toggle_coupon():
     data = request.get_json() or {}
     code = data.get('code', '').strip().upper()
@@ -1120,12 +1146,62 @@ def admin_toggle_coupon():
             return jsonify({"success": True, "message": f"Coupon {code} {'activated' if c['active'] else 'deactivated'}."})
     return jsonify({"success": False, "message": "Coupon not found."}), 404
 
+# --- CATEGORY MANAGEMENT (ADMIN) ---
+@app.route('/api/admin/categories', methods=['GET'])
+@admin_required
+def admin_get_categories():
+    return jsonify({"categories": CATEGORIES})
+
+@app.route('/api/admin/add_category', methods=['POST'])
+@admin_required
+def admin_add_category():
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({"success": False, "message": "Category name is required."}), 400
+    if name in CATEGORIES:
+        return jsonify({"success": False, "message": "Category already exists."}), 400
+    CATEGORIES.append(name)
+    return jsonify({"success": True, "message": f"Category '{name}' added."})
+
+@app.route('/api/admin/delete_category', methods=['POST'])
+@admin_required
+def admin_delete_category():
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({"success": False, "message": "Category name is required."}), 400
+    if name not in CATEGORIES:
+        return jsonify({"success": False, "message": "Category not found."}), 404
+    # Prevent deletion if any product uses this category (optional, but we'll allow)
+    CATEGORIES.remove(name)
+    return jsonify({"success": True, "message": f"Category '{name}' removed."})
+
 # --- ADMIN PANEL ROUTES ---
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session['admin_logged_in'] = True
+            return redirect(url_for('admin_panel'))
+        else:
+            return render_template_string(ADMIN_LOGIN_TEMPLATE, error="Invalid username or password.")
+    return render_template_string(ADMIN_LOGIN_TEMPLATE, error=None)
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('admin_logged_in', None)
+    return redirect(url_for('admin_login'))
+
 @app.route('/admin')
+@admin_required
 def admin_panel():
-    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, settings=SETTINGS, slides=SLIDES, ads=ADS, certifications=CERTIFICATIONS, customers=CUSTOMERS, coupons=COUPONS)
+    return render_template_string(ADMIN_TEMPLATE, products=PRODUCTS, orders=ORDERS, settings=SETTINGS, slides=SLIDES, ads=ADS, certifications=CERTIFICATIONS, customers=CUSTOMERS, coupons=COUPONS, categories=CATEGORIES)
 
 @app.route('/api/admin/update_status', methods=['POST'])
+@admin_required
 def admin_update_status():
     data = request.get_json()
     order_id = data.get('order_id')
@@ -1145,6 +1221,7 @@ def admin_update_status():
     return jsonify({"success": True})
 
 @app.route('/api/admin/accept_order', methods=['POST'])
+@admin_required
 def admin_accept_order():
     data = request.get_json()
     order_id = data.get('order_id')
@@ -1157,6 +1234,7 @@ def admin_accept_order():
     return jsonify({"success": True})
 
 @app.route('/api/admin/reject_order', methods=['POST'])
+@admin_required
 def admin_reject_order():
     data = request.get_json()
     order_id = data.get('order_id')
@@ -1169,6 +1247,7 @@ def admin_reject_order():
     return jsonify({"success": True})
 
 @app.route('/api/admin/add_ad', methods=['POST'])
+@admin_required
 def admin_add_ad():
     title = request.form.get('title', 'Advertisement')
     link = request.form.get('link', '#')
@@ -1189,6 +1268,7 @@ def admin_add_ad():
     return redirect('/admin')
 
 @app.route('/api/admin/delete_ad', methods=['POST'])
+@admin_required
 def admin_delete_ad():
     data = request.get_json()
     ad_id = int(data.get('id'))
@@ -1197,6 +1277,7 @@ def admin_delete_ad():
     return jsonify({"success": True})
 
 @app.route('/api/admin/add_product', methods=['POST'])
+@admin_required
 def admin_add_product():
     name = request.form.get('name')
     category = request.form.get('category')
@@ -1276,6 +1357,7 @@ def admin_add_product():
     return redirect('/admin')
 
 @app.route('/api/admin/update_gallery', methods=['POST'])
+@admin_required
 def admin_update_gallery():
     prod_id = int(request.form.get('product_id'))
     product = next((p for p in PRODUCTS if p['id'] == prod_id), None)
@@ -1297,6 +1379,7 @@ def admin_update_gallery():
     return redirect('/admin')
 
 @app.route('/api/admin/edit_product', methods=['POST'])
+@admin_required
 def admin_edit_product():
     data = request.get_json()
     prod_id = int(data.get('id'))
@@ -1311,6 +1394,7 @@ def admin_edit_product():
     return jsonify({"success": True})
 
 @app.route('/api/admin/delete_product', methods=['POST'])
+@admin_required
 def admin_delete_product():
     data = request.get_json()
     prod_id = int(data.get('id'))
@@ -1319,6 +1403,7 @@ def admin_delete_product():
     return jsonify({"success": True})
 
 @app.route('/api/admin/add_slide', methods=['POST'])
+@admin_required
 def admin_add_slide():
     image_files = request.files.getlist('image_files')
     if not image_files:
@@ -1350,6 +1435,7 @@ def admin_add_slide():
     return redirect('/admin')
 
 @app.route('/api/admin/delete_slide', methods=['POST'])
+@admin_required
 def admin_delete_slide():
     data = request.get_json()
     slide_id = int(data.get('id'))
@@ -1358,6 +1444,7 @@ def admin_delete_slide():
     return jsonify({"success": True})
 
 @app.route('/api/admin/update_logo', methods=['POST'])
+@admin_required
 def admin_update_logo():
     logo_file = request.files.get('logo_file')
     if logo_file and logo_file.filename != '':
@@ -1366,7 +1453,53 @@ def admin_update_logo():
         SETTINGS['logo'] = logo_b64
     return redirect('/admin')
 
-# ==================== UPDATED TEMPLATE – with coupon integration ====================
+# ==================== TEMPLATES (unchanged except ADMIN_TEMPLATE) ====================
+
+# --- ADMIN LOGIN TEMPLATE (new) ---
+ADMIN_LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login | CHIRANJEEVI</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; font-family:'Poppins', sans-serif; }
+        body { background: #FAF7F0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .login-card { background: white; padding: 40px 35px; border-radius: 20px; width: 400px; max-width: 94%; box-shadow: 0 20px 40px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .login-card h2 { color: #1b4332; font-weight: 700; margin-bottom: 8px; font-size: 24px; text-align: center; }
+        .login-card p { color: #666; font-size: 13px; text-align: center; margin-bottom: 25px; }
+        .login-card label { font-weight: 600; font-size: 13px; display: block; margin-bottom: 4px; color: #1e293b; }
+        .login-card input { width: 100%; padding: 12px 15px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 14px; margin-bottom: 20px; transition: 0.2s; background: #f8fafc; }
+        .login-card input:focus { border-color: #1b4332; outline: none; background: #fff; box-shadow: 0 0 0 4px rgba(27,67,50,0.1); }
+        .login-card button { width: 100%; padding: 14px; background: #1b4332; color: white; border: none; border-radius: 10px; font-weight: 600; font-size: 15px; cursor: pointer; transition: 0.2s; }
+        .login-card button:hover { background: #2d6a4f; }
+        .error-msg { color: #991b1b; background: #fee2e2; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; text-align: center; }
+        .login-card .footer-text { margin-top: 20px; font-size: 12px; color: #94a3b8; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2>🔐 Admin Login</h2>
+        <p>Enter your credentials to manage the store</p>
+        {% if error %}
+        <div class="error-msg">{{ error }}</div>
+        {% endif %}
+        <form method="POST">
+            <label>Username</label>
+            <input type="text" name="username" placeholder="admin" required>
+            <label>Password</label>
+            <input type="password" name="password" placeholder="••••••••" required>
+            <button type="submit">Log In</button>
+        </form>
+        <div class="footer-text">CHIRANJEEVI Admin Panel • Secure Access</div>
+    </div>
+</body>
+</html>
+"""
+
+# --- MAIN TEMPLATE (unchanged) ---
 TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -3210,7 +3343,7 @@ PRODUCT_DETAIL_TEMPLATE = """
 </html>
 """
 
-# --- ADMIN TEMPLATE (with Broadcast and Coupon tabs) ---
+# --- ADMIN TEMPLATE (updated with Categories tab & order search) ---
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -3241,6 +3374,7 @@ ADMIN_TEMPLATE = """
         
         .admin-topbar { display: flex; align-items: center; gap: 15px; margin-bottom: 25px; background: white; padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); }
         .admin-menu-toggle { background: none; border: none; font-size: 20px; color: var(--green-primary); cursor: pointer; }
+        .admin-topbar .logout-btn { margin-left: auto; background: #dc2626; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
 
         .admin-section { display: none; }
         .admin-section.active { display: block; }
@@ -3300,6 +3434,17 @@ ADMIN_TEMPLATE = """
         .customer-list { max-height: 200px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; padding: 10px; }
         .customer-item { display: flex; gap: 20px; padding: 6px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
         .customer-item span:first-child { font-weight: 500; width: 120px; }
+
+        /* Search bar for orders */
+        .order-search-bar { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+        .order-search-bar input { flex: 1; min-width: 200px; padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
+        .order-search-bar button { background: var(--green-primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+
+        .category-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #eee; }
+        .category-item button { background: #dc2626; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 12px; }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
     </style>
 </head>
 <body>
@@ -3318,12 +3463,14 @@ ADMIN_TEMPLATE = """
                 <button onclick="switchAdminTab('upload', this)"><i class="fa-solid fa-circle-plus"></i> Upload Product</button>
                 <button onclick="switchAdminTab('branding', this)"><i class="fa-solid fa-image"></i> Logo</button>
                 <button onclick="switchAdminTab('certifications', this)"><i class="fa-solid fa-award"></i> Certifications</button>
+                <button onclick="switchAdminTab('categories', this)"><i class="fa-solid fa-tags"></i> Categories</button>
                 <button onclick="switchAdminTab('broadcast', this)"><i class="fa-solid fa-bullhorn"></i> Broadcast</button>
                 <button onclick="switchAdminTab('coupons', this)"><i class="fa-solid fa-ticket"></i> Coupons</button>
             </div>
         </div>
         <div>
-            <a href="/" target="_blank" style="color: white; text-decoration: none; font-size: 13px; display: flex; align-items: center; gap: 8px;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Visit Storefront</a>
+            <a href="/admin/logout" style="color: white; text-decoration: none; font-size: 13px; display: flex; align-items: center; gap: 8px;"><i class="fa-solid fa-sign-out-alt"></i> Logout</a>
+            <a href="/" target="_blank" style="color: white; text-decoration: none; font-size: 13px; display: flex; align-items: center; gap: 8px; margin-top: 10px;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Visit Storefront</a>
         </div>
     </div>
 
@@ -3331,14 +3478,19 @@ ADMIN_TEMPLATE = """
         <div class="admin-topbar">
             <button class="admin-menu-toggle" onclick="toggleAdminSidebar()"><i class="fa-solid fa-bars"></i></button>
             <span style="font-weight: 600; color: var(--green-primary); font-size: 15px;">CHIRANJEEVI - Management Dashboard</span>
+            <a href="/admin/logout" class="logout-btn"><i class="fa-solid fa-sign-out-alt"></i> Logout</a>
         </div>
 
         <!-- Orders Tab -->
         <div id="tab-orders" class="admin-section active">
             <h2>Customer Orders Management</h2>
             <div class="card">
+                <div class="order-search-bar">
+                    <input type="text" id="orderSearchInput" placeholder="Search by Order ID, Email, or Phone..." onkeyup="filterOrders()">
+                    <button onclick="filterOrders()"><i class="fa-solid fa-search"></i> Search</button>
+                </div>
                 {% if orders %}
-                <table>
+                <table id="ordersTable">
                     <thead>
                         <tr>
                             <th>Order ID</th>
@@ -3352,7 +3504,7 @@ ADMIN_TEMPLATE = """
                     </thead>
                     <tbody>
                         {% for o in orders %}
-                        <tr id="order-row-{{ o.order_id }}">
+                        <tr id="order-row-{{ o.order_id }}" data-search="{{ o.order_id }} {{ o.email }} {{ o.phone }}">
                             <td><b>{{ o.order_id }}</b><br><span style="font-size:11px; color:#888;">{{ o.date }}</span></td>
                             <td><b>{{ o.name }}</b><br>{{ o.phone }}<br><span style="font-size:11px; color:#666;">{{ o.email }}</span></td>
                             <td>
@@ -3547,13 +3699,8 @@ ADMIN_TEMPLATE = """
                     <input type="text" name="name" class="form-control" required placeholder="e.g. Rosemary Hair Tonic">
                     
                     <label style="font-weight:600; font-size:13px;">Category *</label>
-                    <select name="category" class="form-control" required>
-                        <option value="Apparel">Apparel</option>
-                        <option value="Fragrance">Fragrance</option>
-                        <option value="Skin Care">Skin Care</option>
-                        <option value="Hair Care">Hair Care</option>
-                        <option value="Oil">Oil</option>
-                        <option value="Shampoo">Shampoo</option>
+                    <select name="category" class="form-control" required id="categorySelect">
+                        <!-- populated by JavaScript -->
                     </select>
 
                     <label style="font-weight:600; font-size:13px;">Original Price (MRP)</label>
@@ -3653,6 +3800,30 @@ ADMIN_TEMPLATE = """
             </div>
         </div>
 
+        <!-- Categories Tab -->
+        <div id="tab-categories" class="admin-section">
+            <h2>Product Categories</h2>
+            <div class="card" style="max-width: 600px;">
+                <h4>Add New Category</h4>
+                <form id="categoryForm" onsubmit="addCategory(event)">
+                    <input type="text" id="categoryName" class="form-control" placeholder="Category name (e.g. Herbal Oils)" required>
+                    <button type="submit" class="btn-submit"><i class="fa-solid fa-plus"></i> Add Category</button>
+                </form>
+                <div id="categoryStatus" style="margin-top:10px; font-weight:600;"></div>
+            </div>
+            <div class="card">
+                <h4>Current Categories</h4>
+                <div id="categoryList">
+                    {% for cat in categories %}
+                    <div class="category-item" data-name="{{ cat }}">
+                        <span>{{ cat }}</span>
+                        <button onclick="deleteCategory('{{ cat }}')">Remove</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
         <!-- Broadcast Tab -->
         <div id="tab-broadcast" class="admin-section">
             <h2>Send Broadcast Message to All Customers</h2>
@@ -3716,13 +3887,32 @@ ADMIN_TEMPLATE = """
     </div>
 
     <script>
-        function toggleAdminSidebar() { document.getElementById('adminSidebar').classList.toggle('collapsed'); document.getElementById('adminContent').classList.toggle('expanded'); }
+        // --- Order Search ---
+        function filterOrders() {
+            const query = document.getElementById('orderSearchInput').value.toLowerCase().trim();
+            const rows = document.querySelectorAll('#ordersTable tbody tr');
+            rows.forEach(row => {
+                const searchData = row.getAttribute('data-search') || '';
+                const match = searchData.toLowerCase().includes(query);
+                row.style.display = match ? '' : 'none';
+            });
+        }
+
+        // --- Sidebar Toggle ---
+        function toggleAdminSidebar() {
+            document.getElementById('adminSidebar').classList.toggle('collapsed');
+            document.getElementById('adminContent').classList.toggle('expanded');
+        }
+
+        // --- Tab switching ---
         function switchAdminTab(tabId, btn) {
             document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
             document.querySelectorAll('.admin-nav button').forEach(b => b.classList.remove('active'));
             document.getElementById('tab-' + tabId).classList.add('active');
-            btn.classList.add('active');
+            if (btn) btn.classList.add('active');
         }
+
+        // --- Order actions ---
         function submitStatusUpdate(orderId) {
             let step = document.getElementById('status-select-' + orderId).value;
             let statusMap = { "1": "Order Placed", "2": "Packaging", "3": "Shipped", "4": "Delivered", "5": "Refunded" };
@@ -3755,6 +3945,8 @@ ADMIN_TEMPLATE = """
                     .then(r => r.json()).then(d => { if(d.success) location.reload(); });
             }
         }
+
+        // --- Banners & Ads ---
         function deleteSlide(id) {
             if(confirm("Remove this slide?")) {
                 fetch('/api/admin/delete_slide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
@@ -3767,6 +3959,8 @@ ADMIN_TEMPLATE = """
                     .then(r => r.json()).then(d => { if(d.success) document.getElementById('ad-row-'+id).remove(); });
             }
         }
+
+        // --- Inventory ---
         function toggleEditVariants(prodId) {
             let display = document.getElementById('variant-display-' + prodId);
             let edit = document.getElementById('variant-edit-' + prodId);
@@ -3816,6 +4010,8 @@ ADMIN_TEMPLATE = """
                     .then(r => r.json()).then(d => { if(d.success) document.getElementById('prod-row-'+id).remove(); });
             }
         }
+
+        // --- Upload product helpers ---
         function addVariantUpload() {
             let container = document.getElementById('variant-container');
             let row = document.createElement('div'); row.className = 'variant-row';
@@ -3848,7 +4044,6 @@ ADMIN_TEMPLATE = """
                 else alert("Failed to add: " + d.message);
             });
         }
-
         function deleteCertification(index) {
             if (!confirm("Remove this certification?")) return;
             fetch('/api/admin/delete_certification', {
@@ -3858,6 +4053,38 @@ ADMIN_TEMPLATE = """
             }).then(r => r.json()).then(d => {
                 if (d.success) location.reload();
                 else alert("Failed to delete: " + d.message);
+            });
+        }
+
+        // ---- Categories ----
+        function addCategory(e) {
+            e.preventDefault();
+            const name = document.getElementById('categoryName').value.trim();
+            if (!name) return alert("Category name is required.");
+            const statusDiv = document.getElementById('categoryStatus');
+            statusDiv.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Adding...';
+            fetch('/api/admin/add_category', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            }).then(r => r.json()).then(d => {
+                if (d.success) {
+                    statusDiv.innerHTML = `<span style="color:#166534;"><i class="fa-solid fa-check-circle"></i> ${d.message}</span>`;
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    statusDiv.innerHTML = `<span style="color:#991b1b;">${d.message}</span>`;
+                }
+            });
+        }
+        function deleteCategory(name) {
+            if (!confirm(`Remove category "${name}"?`)) return;
+            fetch('/api/admin/delete_category', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            }).then(r => r.json()).then(d => {
+                if (d.success) location.reload();
+                else alert("Failed: " + d.message);
             });
         }
 
@@ -3904,7 +4131,6 @@ ADMIN_TEMPLATE = """
                 }
             });
         }
-
         function deleteCoupon(code) {
             if (!confirm(`Delete coupon ${code}?`)) return;
             fetch('/api/admin/delete_coupon', {
@@ -3916,7 +4142,6 @@ ADMIN_TEMPLATE = """
                 else alert("Failed: " + d.message);
             });
         }
-
         function toggleCoupon(code) {
             fetch('/api/admin/toggle_coupon', {
                 method: 'POST',
@@ -4014,6 +4239,23 @@ ADMIN_TEMPLATE = """
             document.body.appendChild(t);
             setTimeout(() => { t.remove(); }, 3000);
         }
+
+        // ---- Load categories into dropdown ----
+        function loadCategories() {
+            fetch('/api/admin/categories')
+                .then(r => r.json())
+                .then(data => {
+                    const select = document.getElementById('categorySelect');
+                    select.innerHTML = '';
+                    data.categories.forEach(cat => {
+                        const opt = document.createElement('option');
+                        opt.value = cat;
+                        opt.textContent = cat;
+                        select.appendChild(opt);
+                    });
+                });
+        }
+        document.addEventListener('DOMContentLoaded', loadCategories);
     </script>
 </body>
 </html>
@@ -4370,4 +4612,3 @@ HTML_INVOICE_TEMPLATE = """
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=7784, debug=True)
-
