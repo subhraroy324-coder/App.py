@@ -1,4 +1,4 @@
-# app.py - Sukuna Bomber for Vercel
+# app.py - Sukuna Bomber + Advanced Admin Panel + Tap-to-Play Music Popup
 import os
 import json
 import requests
@@ -7,6 +7,9 @@ from flask import Flask, render_template_string, request, jsonify, redirect, url
 app = Flask(__name__)
 
 # Configuration
+UPLOAD_FOLDER = 'static/uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 SETTINGS_FILE = 'settings.json'
 API_BASE_URL = "https://ft-osint-api.duckdns.org/api/bomber"
 
@@ -38,12 +41,8 @@ def load_settings():
     return DEFAULT_SETTINGS
 
 def save_settings(settings):
-    try:
-        with open(SETTINGS_FILE, 'w') as f:
-            json.dump(settings, f)
-    except:
-        # Vercel read-only fallback
-        pass
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(settings, f)
 
 # ----------------------------------------------------------------------
 # HTML TEMPLATES (Embedded)
@@ -451,7 +450,7 @@ MAIN_HTML = """
 <body>
     <!-- Background Audio -->
     {% if audio_url %}
-        <audio id="bg-music" loop preload="auto" src="{{ audio_url }}"></audio>
+        <audio id="bg-music" loop src="{{ audio_url }}"></audio>
         
         <!-- Tap to Play Music Popup -->
         <div id="audio-popup" class="audio-popup">
@@ -577,33 +576,22 @@ MAIN_HTML = """
 
         if (bgMusic && audioPopup) {
             bgMusic.volume = 0.5; // Set volume to 50%
-            let audioUnlocked = false;
             
-            const unlockAudio = () => {
-                if (audioUnlocked) return;
+            // Function to start music and hide the popup
+            const startMusic = () => {
                 bgMusic.play().then(() => {
-                    audioUnlocked = true;
+                    // Success! Fade out the popup
                     audioPopup.classList.add('hidden');
-                    // Remove listeners once music starts
-                    document.removeEventListener('click', unlockAudio);
-                    document.removeEventListener('touchstart', unlockAudio);
                 }).catch(error => {
-                    console.log("Playback failed, will try again on next interaction:", error);
+                    console.log("Playback failed:", error);
+                    // Even if it fails, hide the popup so the user can use the site
+                    audioPopup.classList.add('hidden');
                 });
             };
 
-            // Attach to the popup itself
-            audioPopup.addEventListener('click', unlockAudio);
-            audioPopup.addEventListener('touchstart', unlockAudio);
-            
-            // Also attach to the whole document just in case
-            document.addEventListener('click', unlockAudio);
-            document.addEventListener('touchstart', unlockAudio);
-            
-            // Fallback: If the popup is clicked but audio fails, hide the popup anyway so the user isn't stuck.
-            audioPopup.addEventListener('click', () => {
-                setTimeout(() => { audioPopup.classList.add('hidden'); }, 1500);
-            });
+            // Listen for a click/tap anywhere on the popup
+            audioPopup.addEventListener('click', startMusic);
+            audioPopup.addEventListener('touchstart', startMusic);
         }
 
         // --- Sidebar Logic ---
@@ -778,7 +766,8 @@ ADMIN_HTML = """
             color: #ccc;
         }
         .form-group input[type="text"],
-        .form-group input[type="number"] {
+        .form-group input[type="number"],
+        .form-group input[type="file"] {
             width: 100%;
             padding: 12px 15px;
             background: rgba(255, 255, 255, 0.05);
@@ -791,6 +780,33 @@ ADMIN_HTML = """
         .form-group input:focus {
             border-color: #00ff00;
             box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+        }
+        .form-group input[type="file"]::file-selector-button {
+            background: #00ff00;
+            color: #000;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .preview {
+            margin-top: 10px;
+            text-align: center;
+            padding: 10px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+        }
+        .preview img, .preview video {
+            max-width: 100%;
+            max-height: 150px;
+            border-radius: 10px;
+            border: 1px solid #00ff00;
+        }
+        .preview audio {
+            width: 100%;
+            margin-top: 10px;
         }
         .btn-save {
             width: 100%;
@@ -818,20 +834,95 @@ ADMIN_HTML = """
         .back-link:hover { text-decoration: underline; }
         hr { border: 1px solid rgba(255,255,255,0.1); margin: 30px 0; }
         .section-title { color: #00ff00; margin-bottom: 15px; font-size: 1.2rem; border-bottom: 1px solid #00ff00; padding-bottom: 5px; display: inline-block;}
-        .warning { background: rgba(255, 0, 0, 0.1); border: 1px solid #ff0000; color: #ff5555; padding: 10px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 20px; text-align: center;}
     </style>
 </head>
 <body>
     <div class="admin-card">
         <h1>⚙️ Admin Panel</h1>
         
-        <div class="warning">
-            ⚠️ <strong>Vercel Hosting Note:</strong> Vercel does not allow permanent file uploads. For images and audio to work, please upload them to a free image host (like Imgur or Catbox) and paste the <strong>Direct Link</strong> below.
-        </div>
+        <!-- Profile Image Upload -->
+        <form action="/admin/upload/profile" method="POST" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="section-title">1. Profile Image (Gallery)</label>
+                <input type="file" name="file" accept="image/*" required>
+            </div>
+            <div class="preview">
+                <p>Current Profile Image:</p>
+                <img src="{{ profile_image }}" alt="Profile">
+            </div>
+            <button type="submit" class="btn-save">Upload Profile Image</button>
+        </form>
+
+        <hr>
+
+        <!-- Main Background Upload -->
+        <form action="/admin/upload/main_bg" method="POST" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="section-title">2. Main Website Background (Video/Photo)</label>
+                <input type="file" name="file" accept="image/*,video/*" required>
+            </div>
+            <div class="preview">
+                <p>Current Main Background:</p>
+                {% if main_bg %}
+                    {% if main_bg.endswith(('.mp4', '.webm', '.ogg')) %}
+                        <video src="{{ main_bg }}" autoplay loop muted playsinline></video>
+                    {% else %}
+                        <img src="{{ main_bg }}" alt="Main BG">
+                    {% endif %}
+                {% else %}
+                    <p style="color: #888;">Default (Black)</p>
+                {% endif %}
+            </div>
+            <button type="submit" class="btn-save">Upload Main Background</button>
+        </form>
+
+        <hr>
+
+        <!-- Sidebar Background Upload -->
+        <form action="/admin/upload/sidebar_bg" method="POST" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="section-title">3. Sidebar Background (Video/Photo)</label>
+                <input type="file" name="file" accept="image/*,video/*" required>
+            </div>
+            <div class="preview">
+                <p>Current Sidebar Background:</p>
+                {% if sidebar_bg %}
+                    {% if sidebar_bg.endswith(('.mp4', '.webm', '.ogg')) %}
+                        <video src="{{ sidebar_bg }}" autoplay loop muted playsinline></video>
+                    {% else %}
+                        <img src="{{ sidebar_bg }}" alt="Sidebar BG">
+                    {% endif %}
+                {% else %}
+                    <p style="color: #888;">Default (Black)</p>
+                {% endif %}
+            </div>
+            <button type="submit" class="btn-save">Upload Sidebar Background</button>
+        </form>
+
+        <hr>
+
+        <!-- Background Audio Upload -->
+        <form action="/admin/upload/audio" method="POST" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="section-title">4. Website Background Music (Audio)</label>
+                <input type="file" name="file" accept="audio/*" required>
+            </div>
+            <div class="preview">
+                <p>Current Audio:</p>
+                {% if audio_url %}
+                    <audio controls src="{{ audio_url }}"></audio>
+                {% else %}
+                    <p style="color: #888;">No audio uploaded</p>
+                {% endif %}
+            </div>
+            <button type="submit" class="btn-save">Upload Audio</button>
+        </form>
+
+        <hr>
 
         <!-- Text Settings -->
         <form action="/admin/settings" method="POST">
-            <h2 class="section-title">General Settings</h2>
+            <h2 class="section-title">5. General Settings</h2>
             
             <div class="form-group">
                 <label>Owner / Developer Name</label>
@@ -844,34 +935,14 @@ ADMIN_HTML = """
             </div>
             
             <div class="form-group">
-                <label>Default Attack Count</label>
+                <label>Default Attack Count (Messages to send)</label>
                 <input type="number" name="default_count" value="{{ default_count }}" required min="1" max="500">
             </div>
 
-            <div class="form-group">
-                <label>Profile Image URL (Direct Link)</label>
-                <input type="text" name="profile_image" value="{{ profile_image }}" required>
-            </div>
-
-            <div class="form-group">
-                <label>Main Background URL (Image or Video Direct Link)</label>
-                <input type="text" name="main_bg" value="{{ main_bg }}">
-            </div>
-
-            <div class="form-group">
-                <label>Sidebar Background URL (Image or Video Direct Link)</label>
-                <input type="text" name="sidebar_bg" value="{{ sidebar_bg }}">
-            </div>
-
-            <div class="form-group">
-                <label>Background Music URL (MP3 Direct Link)</label>
-                <input type="text" name="audio_url" value="{{ audio_url }}">
-            </div>
-
-            <h2 class="section-title" style="margin-top: 20px;">Contact Information</h2>
+            <h2 class="section-title" style="margin-top: 20px;">6. Contact Information</h2>
             
             <div class="form-group">
-                <label>Phone Number</label>
+                <label>Phone Number (e.g., +1234567890)</label>
                 <input type="text" name="phone" value="{{ phone }}" required>
             </div>
             
@@ -881,7 +952,7 @@ ADMIN_HTML = """
             </div>
             
             <div class="form-group">
-                <label>WhatsApp Number (with country code)</label>
+                <label>WhatsApp Number (with country code, no spaces)</label>
                 <input type="text" name="whatsapp" value="{{ whatsapp }}" required>
             </div>
 
@@ -933,6 +1004,33 @@ def admin():
         whatsapp=settings['whatsapp']
     )
 
+@app.route('/admin/upload/<field>', methods=['POST'])
+def upload_file(field):
+    if 'file' not in request.files:
+        return redirect('/admin')
+    file = request.files['file']
+    if file.filename == '':
+        return redirect('/admin')
+    
+    # Save the uploaded file
+    filename = f"{field}_{file.filename}"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+    
+    # Update settings
+    settings = load_settings()
+    if field == 'profile':
+        settings['profile_image'] = f"/static/uploads/{filename}"
+    elif field == 'main_bg':
+        settings['main_bg'] = f"/static/uploads/{filename}"
+    elif field == 'sidebar_bg':
+        settings['sidebar_bg'] = f"/static/uploads/{filename}"
+    elif field == 'audio':
+        settings['audio_url'] = f"/static/uploads/{filename}"
+    
+    save_settings(settings)
+    return redirect('/admin')
+
 @app.route('/admin/settings', methods=['POST'])
 def update_settings():
     settings = load_settings()
@@ -941,10 +1039,6 @@ def update_settings():
     settings['phone'] = request.form.get('phone', settings['phone'])
     settings['telegram'] = request.form.get('telegram', settings['telegram'])
     settings['whatsapp'] = request.form.get('whatsapp', settings['whatsapp'])
-    settings['profile_image'] = request.form.get('profile_image', settings['profile_image'])
-    settings['main_bg'] = request.form.get('main_bg', settings['main_bg'])
-    settings['sidebar_bg'] = request.form.get('sidebar_bg', settings['sidebar_bg'])
-    settings['audio_url'] = request.form.get('audio_url', settings['audio_url'])
     try:
         settings['default_count'] = int(request.form.get('default_count', settings['default_count']))
     except ValueError:
@@ -971,4 +1065,6 @@ def bomber_proxy():
 
 if __name__ == '__main__':
     print("Starting Sukuna Bomber...")
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 4887)), debug=True)
+    print("Main UI: http://127.0.0.1:4887")
+    print("Admin Panel: http://127.0.0.1:4887/admin")
+    app.run(host='127.0.0.1', port=4887, debug=True)
