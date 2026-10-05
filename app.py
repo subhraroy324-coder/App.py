@@ -1,11 +1,6 @@
 # =====================================================================
-#  VERNEX OSINT API CONTROL CENTER
+#  VERNEX OSINT API CONTROL CENTER (RENDER READY - FIXED)
 #  Developer: SHAYAN_EXPLORER
-#  Stack: Flask + SQLite + Telegram Bot
-#  Run:  pip install flask requests
-#        python app.py
-#  Open: http://127.0.0.1:5000
-#  Admin Login: vernex / vernex@16vx
 # =====================================================================
 
 import os, json, sqlite3, secrets, threading, time, hashlib, random, string
@@ -17,10 +12,11 @@ from flask import Flask, request, jsonify, session
 # ---------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------
-DB_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vernex.db")
+# Ensure the database is created in the project root (which Render makes writable)
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vernex.db")
 UPSTREAM_BASE  = "https://ft-osint-api.duckdns.org/api"
-ADMIN_USER     = "vernex"
-ADMIN_PASS     = "vernex@16vx"
+ADMIN_USER     = os.environ.get("ADMIN_USER", "vernex")
+ADMIN_PASS     = os.environ.get("ADMIN_PASS", "vernex@16vx")
 SECRET_KEY     = secrets.token_hex(32)
 
 app = Flask(__name__)
@@ -71,55 +67,62 @@ def db():
     return conn
 
 def init_db():
-    with DB_LOCK:
-        c = db()
-        cur = c.cursor()
-        cur.executescript("""
-        CREATE TABLE IF NOT EXISTS api_keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key_value TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            tools TEXT NOT NULL,
-            expires_at TEXT,
-            request_limit INTEGER DEFAULT 0,
-            request_used INTEGER DEFAULT 0,
-            suspended INTEGER DEFAULT 0,
-            price REAL DEFAULT 0,
-            device_limit INTEGER DEFAULT 1,
-            devices TEXT DEFAULT '[]',
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key_value TEXT,
-            key_name TEXT,
-            tool TEXT,
-            input TEXT,
-            ip TEXT,
-            device TEXT,
-            status TEXT,
-            ts TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS settings (
-            k TEXT PRIMARY KEY,
-            v TEXT
-        );
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            password TEXT,
-            device_limit INTEGER DEFAULT 1,
-            devices TEXT DEFAULT '[]',
-            api_key TEXT,
-            active INTEGER DEFAULT 1,
-            created_at TEXT
-        );
-        """)
-        c.commit()
-        for k, v in [("upstream_key",""), ("bot_token",""), ("bot_enabled","0"), ("bot_admin_chat","")]:
-            cur.execute("INSERT OR IGNORE INTO settings (k,v) VALUES (?,?)", (k, v))
-        c.commit()
-        c.close()
+    try:
+        with DB_LOCK:
+            c = db()
+            cur = c.cursor()
+            cur.executescript("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_value TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                tools TEXT NOT NULL,
+                expires_at TEXT,
+                request_limit INTEGER DEFAULT 0,
+                request_used INTEGER DEFAULT 0,
+                suspended INTEGER DEFAULT 0,
+                price REAL DEFAULT 0,
+                device_limit INTEGER DEFAULT 1,
+                devices TEXT DEFAULT '[]',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_value TEXT,
+                key_name TEXT,
+                tool TEXT,
+                input TEXT,
+                ip TEXT,
+                device TEXT,
+                status TEXT,
+                ts TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                k TEXT PRIMARY KEY,
+                v TEXT
+            );
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE,
+                password TEXT,
+                device_limit INTEGER DEFAULT 1,
+                devices TEXT DEFAULT '[]',
+                api_key TEXT,
+                active INTEGER DEFAULT 1,
+                created_at TEXT
+            );
+            """)
+            c.commit()
+            for k, v in [("upstream_key",""), ("bot_token",""), ("bot_enabled","0"), ("bot_admin_chat","")]:
+                cur.execute("INSERT OR IGNORE INTO settings (k,v) VALUES (?,?)", (k, v))
+            c.commit()
+            c.close()
+        print("Database initialized successfully.")
+    except Exception as e:
+        print(f"Database initialization error: {e}")
+
+# Initialize DB immediately when the module loads
+init_db()
 
 def get_setting(k, default=""):
     with DB_LOCK:
@@ -148,6 +151,13 @@ def is_expired(s):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) > dt
+
+# ---------------------------------------------------------------------
+# GLOBAL ERROR HANDLER (Prevents HTTP 500 HTML crashes)
+# ---------------------------------------------------------------------
+@app.errorhandler(Exception)
+def handle_exception(e):
+    return jsonify({"ok": False, "error": str(e)}), 500
 
 # ---------------------------------------------------------------------
 # AUTH DECORATOR
@@ -216,18 +226,27 @@ def create_key():
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"ok": False, "error": "Key name is required"}), 400
+    
     key_value = (data.get("key_value") or "").strip()
     if not key_value:
         key_value = gen_key()
+        
     tools = data.get("tools", "all")
     if isinstance(tools, list):
         tools = json.dumps([t for t in tools if t in TOOLS])
     else:
         tools = "all"
+        
     expires_at = data.get("expires_at") or None
-    request_limit = int(data.get("request_limit") or 0)
-    price = float(data.get("price") or 0)
-    device_limit = int(data.get("device_limit") or 1)
+    
+    # Safe conversions
+    try: request_limit = int(data.get("request_limit") or 0)
+    except: request_limit = 0
+    try: price = float(data.get("price") or 0)
+    except: price = 0.0
+    try: device_limit = int(data.get("device_limit") or 1)
+    except: device_limit = 1
+
     try:
         with DB_LOCK:
             c = db()
@@ -257,11 +276,14 @@ def edit_key(kid):
             t = "all"
         fields.append("tools=?"); vals.append(t)
     if "request_limit" in data:
-        fields.append("request_limit=?"); vals.append(int(data["request_limit"] or 0))
+        try: fields.append("request_limit=?"); vals.append(int(data["request_limit"] or 0))
+        except: pass
     if "price" in data:
-        fields.append("price=?"); vals.append(float(data["price"] or 0))
+        try: fields.append("price=?"); vals.append(float(data["price"] or 0))
+        except: pass
     if "device_limit" in data:
-        fields.append("device_limit=?"); vals.append(int(data["device_limit"] or 1))
+        try: fields.append("device_limit=?"); vals.append(int(data["device_limit"] or 1))
+        except: pass
     if "suspended" in data:
         fields.append("suspended=?"); vals.append(1 if data["suspended"] else 0)
     if not fields:
@@ -378,7 +400,7 @@ def save_settings():
     data = request.get_json(silent=True) or {}
     for k in ("upstream_key","bot_token","bot_enabled","bot_admin_chat"):
         if k in data:
-            set_setting(k, str(data[k]))
+            set_setting(k, str(data[k] or ""))
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
@@ -500,17 +522,12 @@ def proxy(tool):
         log_request(key_value, row["name"], tool, params.get(TOOLS[tool]["param"],""), f"error:{e}")
         return jsonify({"ok": False, "error": f"Upstream error: {e}"}), 502
 
-    # =========================================================
-    # CLEAN UP OLD DEVELOPER TAGS AND ADD YOURS
-    # =========================================================
+    # Clean up old developer tags and add yours
     if isinstance(body, dict):
-        # Remove any old developer attribution keys
         for old_key in ["by", "developer", "credit", "credits", "owner", "author"]:
             if old_key in body:
                 del body[old_key]
-        # Add your own developer tag
         body["by"] = "DEVELOPER BY @dark_MARLBORO"
-    # =========================================================
 
     with DB_LOCK:
         c = db()
@@ -565,7 +582,6 @@ def bot_send(token, chat_id, text):
     tg_api(token, "sendMessage", {"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
 
 def bot_create_login(token, chat_id, username, password, devices):
-    """Create (or update) a website login + auto API key."""
     try:
         devices = int(devices)
     except Exception:
@@ -589,7 +605,6 @@ def bot_create_login(token, chat_id, username, password, devices):
                       (username, password, devices, "[]", kv, now_iso()))
             action = "created"
 
-        # create api key row
         try:
             c.execute("""INSERT INTO api_keys
                 (key_value,name,tools,expires_at,request_limit,request_used,suspended,price,device_limit,devices,created_at)
@@ -639,9 +654,6 @@ def bot_loop():
                     bot_send(token, chat_id, "⛔ Unauthorized. This bot is private.")
                     continue
 
-                # ---------------------------------------------------
-                # /start — help
-                # ---------------------------------------------------
                 if text.startswith("/start"):
                     bot_send(token, chat_id,
                         "🛰️ <b>VERNEX BOT</b>\n\n"
@@ -657,9 +669,6 @@ def bot_loop():
                         "<i>Example:</i>\n"
                         "<code>/loginkey rahul rahul900P0 1</code>")
 
-                # ---------------------------------------------------
-                # /loginkey  +  /generate  (alias)
-                # ---------------------------------------------------
                 elif text.startswith("/loginkey") or text.startswith("/generate"):
                     parts = text.split()
                     if len(parts) < 4:
@@ -675,9 +684,6 @@ def bot_loop():
                     except Exception as e:
                         bot_send(token, chat_id, f"❌ Failed: <code>{e}</code>")
 
-                # ---------------------------------------------------
-                # /newkey
-                # ---------------------------------------------------
                 elif text.startswith("/newkey"):
                     parts = text.split()
                     if len(parts) < 5:
@@ -707,9 +713,6 @@ def bot_loop():
                         f"📊 {limit} requests\n"
                         f"💰 ₹{price}")
 
-                # ---------------------------------------------------
-                # /keys
-                # ---------------------------------------------------
                 elif text.startswith("/keys"):
                     with DB_LOCK:
                         c = db()
@@ -724,9 +727,6 @@ def bot_loop():
                             lines.append(f"{st} <b>{r['name']}</b>\n<code>{r['key_value']}</code>\n{r['request_used']}/{r['request_limit']}\n")
                         bot_send(token, chat_id, "\n".join(lines))
 
-                # ---------------------------------------------------
-                # /stats
-                # ---------------------------------------------------
                 elif text.startswith("/stats"):
                     with DB_LOCK:
                         c = db()
@@ -740,8 +740,15 @@ def bot_loop():
         except Exception:
             time.sleep(5)
 
+# Start bot thread at module level for Render
+def start_bot_thread():
+    t = threading.Thread(target=bot_loop, daemon=True)
+    t.start()
+
+start_bot_thread()
+
 # =====================================================================
-#  FRONTEND (SPA)  — unchanged
+#  FRONTEND (SPA)
 # =====================================================================
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -1410,16 +1417,4 @@ def index():
 # MAIN
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    init_db()
-    t = threading.Thread(target=bot_loop, daemon=True)
-    t.start()
-    print("=" * 60)
-    print("  VERNEX OSINT API CONTROL CENTER")
-    print("  Developer: SHAYAN_EXPLORER")
-    print("=" * 60)
-    print(f"  Admin URL : http://127.0.0.1:5000")
-    print(f"  Username  : {ADMIN_USER}")
-    print(f"  Password  : {ADMIN_PASS}")
-    print(f"  Proxy     : http://127.0.0.1:5000/api/<tool>?key=YOUR_KEY")
-    print("=" * 60)
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
