@@ -1,11 +1,7 @@
 # =====================================================================
-#  VERNEX OSINT API CONTROL CENTER
+#  VERNEX OSINT API CONTROL CENTER (RENDER READY)
 #  Developer: SHAYAN_EXPLORER
 #  Stack: Flask + SQLite + Telegram Bot
-#  Run:  pip install flask requests
-#        python app.py
-#  Open: http://127.0.0.1:5000
-#  Admin Login: vernex / vernex@16vx
 # =====================================================================
 
 import os, json, sqlite3, secrets, threading, time, hashlib, random, string
@@ -19,8 +15,8 @@ from flask import Flask, request, jsonify, session
 # ---------------------------------------------------------------------
 DB_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vernex.db")
 UPSTREAM_BASE  = "https://ft-osint-api.duckdns.org/api"
-ADMIN_USER     = "vernex"
-ADMIN_PASS     = "vernex@16vx"
+ADMIN_USER     = os.environ.get("ADMIN_USER", "vernex")
+ADMIN_PASS     = os.environ.get("ADMIN_PASS", "vernex@16vx")
 SECRET_KEY     = secrets.token_hex(32)
 
 app = Flask(__name__)
@@ -504,11 +500,9 @@ def proxy(tool):
     # CLEAN UP OLD DEVELOPER TAGS AND ADD YOURS
     # =========================================================
     if isinstance(body, dict):
-        # Remove any old developer attribution keys
         for old_key in ["by", "developer", "credit", "credits", "owner", "author"]:
             if old_key in body:
                 del body[old_key]
-        # Add your own developer tag
         body["by"] = "DEVELOPER BY @dark_MARLBORO"
     # =========================================================
 
@@ -741,7 +735,7 @@ def bot_loop():
             time.sleep(5)
 
 # =====================================================================
-#  FRONTEND (SPA)  — unchanged
+#  FRONTEND (SPA)
 # =====================================================================
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -1407,19 +1401,10 @@ def index():
     return HTML
 
 # ---------------------------------------------------------------------
-# MAIN
+# MAIN (For Render)
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     init_db()
     t = threading.Thread(target=bot_loop, daemon=True)
     t.start()
-    print("=" * 60)
-    print("  VERNEX OSINT API CONTROL CENTER")
-    print("  Developer: SHAYAN_EXPLORER")
-    print("=" * 60)
-    print(f"  Admin URL : http://127.0.0.1:5000")
-    print(f"  Username  : {ADMIN_USER}")
-    print(f"  Password  : {ADMIN_PASS}")
-    print(f"  Proxy     : http://127.0.0.1:5000/api/<tool>?key=YOUR_KEY")
-    print("=" * 60)
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
