@@ -1,5 +1,5 @@
 # =====================================================================
-#  VERNEX OSINT API CONTROL CENTER (RENDER READY - FIXED)
+#  VERNEX OSINT API CONTROL CENTER (DEPLEXO READY - FIXED)
 #  Developer: SHAYAN_EXPLORER
 # =====================================================================
 
@@ -12,7 +12,7 @@ from flask import Flask, request, jsonify, session
 # ---------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------
-# Ensure the database is created in the project root (which Render makes writable)
+# Database will be created in the project root (Deplexo makes this writable)
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vernex.db")
 UPSTREAM_BASE  = "https://ft-osint-api.duckdns.org/api"
 ADMIN_USER     = os.environ.get("ADMIN_USER", "vernex")
@@ -740,7 +740,7 @@ def bot_loop():
         except Exception:
             time.sleep(5)
 
-# Start bot thread at module level for Render
+# Start bot thread at module level for Deplexo
 def start_bot_thread():
     t = threading.Thread(target=bot_loop, daemon=True)
     t.start()
