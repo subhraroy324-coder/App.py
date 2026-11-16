@@ -1,1420 +1,1305 @@
-# =====================================================================
-#  VERNEX OSINT API CONTROL CENTER (DEPLEXO READY - FIXED)
+# ============================================================
+#  SHAYAN_EXPLORER · OSINT API CONTROL CENTER
 #  Developer: SHAYAN_EXPLORER
-# =====================================================================
+# ============================================================
+#  LOCAL RUN:
+#     pip install flask requests psycopg2-binary
+#     python app.py
+# ============================================================
 
-import os, json, sqlite3, secrets, threading, time, hashlib, random, string
-from datetime import datetime, timedelta, timezone
+import os
+import sqlite3
+import secrets
+from datetime import datetime, timezone, timedelta
 from functools import wraps
-import requests
-from flask import Flask, request, jsonify, session
 
-# ---------------------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------------------
-# Database will be created in the project root (Deplexo makes this writable)
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vernex.db")
-UPSTREAM_BASE  = "https://ft-osint-api.duckdns.org/api"
-ADMIN_USER     = os.environ.get("ADMIN_USER", "vernex")
-ADMIN_PASS     = os.environ.get("ADMIN_PASS", "vernex@16vx")
-SECRET_KEY     = secrets.token_hex(32)
+from flask import Flask, request, jsonify, session, redirect, Response
+import requests
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+# ----------------------------- CONFIG -----------------------------
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# If DATABASE_URL exists (Vercel), use PostgreSQL. Otherwise, use local SQLite.
+DATABASE_URL = os.environ.get("DATABASE_URL")
+IS_VERCEL = os.environ.get("VERCEL") is not None
+
+ADMIN_USER = os.environ.get("ADMIN_USER", "vernex")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "vernex@16vx")
+SECRET_KEY = os.environ.get("SECRET_KEY", "shayan-explorer-super-secret-key")
+
+# 🔴 UPSTREAM API SETTINGS
+UPSTREAM_BASE = os.environ.get("UPSTREAM_BASE", "https://ft-osint-api.duckdns.org/api").rstrip("/")
+UPSTREAM_KEY  = os.environ.get("UPSTREAM_KEY", "explorer16") 
+
+BRAND = os.environ.get("BRAND", "SHAYAN_EXPLORER")
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    JSON_SORT_KEYS=False,
+)
 
-DB_LOCK = threading.Lock()
+# ----------------------------- TOOLS ------------------------------
+TOOLS = [
+    {"id": "pk",          "label": "Phone Lookup (PK)",   "params": ["num"],             "path": "pk"},
+    {"id": "number",      "label": "Number Lookup",       "params": ["num"],             "path": "number"},
+    {"id": "name",        "label": "Name Lookup",         "params": ["name"],            "path": "name"},
+    {"id": "aadhar",      "label": "Aadhaar Info",        "params": ["num"],             "path": "aadhar"},
+    {"id": "adharfamily", "label": "Aadhaar Family",      "params": ["num"],             "path": "adharfamily"},
+    {"id": "upi",         "label": "UPI Info",            "params": ["upi"],             "path": "upi"},
+    {"id": "numtoupi",    "label": "Number → UPI",        "params": ["num"],             "path": "numtoupi"},
+    {"id": "pan",         "label": "PAN Info",            "params": ["pan"],             "path": "pan"},
+    {"id": "vehicle",     "label": "Vehicle Info",        "params": ["vehicle"],         "path": "vehicle"},
+    {"id": "veh2num",     "label": "Vehicle → Number",    "params": ["vehicle"],         "path": "veh2num"},
+    {"id": "challan",     "label": "Vehicle Challan",     "params": ["vehicle"],         "path": "challan"},
+    {"id": "bomber",      "label": "SMS Bomber",          "params": ["number", "counter"], "path": "bomber"},
+    {"id": "adv",         "label": "Advanced Lookup",     "params": ["num"],             "path": "adv"},
+    {"id": "paytm",       "label": "Paytm Info",          "params": ["num"],             "path": "paytm"},
+    {"id": "imei",        "label": "IMEI Info",           "params": ["imei"],            "path": "imei"},
+    {"id": "calltracer",  "label": "Call Tracer",         "params": ["num"],             "path": "calltracer"},
+    {"id": "ifsc",        "label": "IFSC Info",           "params": ["ifsc"],            "path": "ifsc"},
+    {"id": "pincode",     "label": "Pincode Info",        "params": ["pin"],             "path": "pincode"},
+    {"id": "ip",          "label": "IP Info",             "params": ["ip"],              "path": "ip"},
+    {"id": "ff",          "label": "Free Fire Info",      "params": ["uid"],             "path": "ff"},
+    {"id": "bgmi",        "label": "BGMI Info",           "params": ["uid"],             "path": "bgmi"},
+    {"id": "snap",        "label": "Snapchat Info",       "params": ["username"],        "path": "snap"},
+    {"id": "email",       "label": "Email → Info",        "params": ["email"],           "path": "email"},
+    {"id": "git",         "label": "GitHub Lookup",       "params": ["username"],        "path": "git"},
+    {"id": "insta",       "label": "Instagram Info",      "params": ["username"],        "path": "insta"},
+    {"id": "tg",          "label": "Telegram Username",   "params": ["info"],            "path": "tg"},
+    {"id": "tgidinfo",    "label": "Telegram ID → Num",   "params": ["id"],              "path": "tgidinfo"},
+    {"id": "numleak",     "label": "Number Leak Check",   "params": ["num"],             "path": "numleak"},
+]
+TOOL_MAP = {t["id"]: t for t in TOOLS}
 
-# ---------------------------------------------------------------------
-# TOOL DEFINITIONS
-# ---------------------------------------------------------------------
-TOOLS = {
-    "number":     {"label":"Number Info",       "icon":"📞", "param":"num"},
-    "pk":         {"label":"Phone → Owner",     "icon":"🔍", "param":"num"},
-    "name":       {"label":"Name → Info",       "icon":"🧑", "param":"name"},
-    "aadhar":     {"label":"Aadhaar Info",      "icon":"🆔", "param":"num"},
-    "adharfamily":{"label":"Aadhaar Family",    "icon":"👨‍👩‍👧", "param":"num"},
-    "upi":        {"label":"UPI Info",          "icon":"💳", "param":"upi"},
-    "numtoupi":   {"label":"Number → UPI",      "icon":"🔗", "param":"num"},
-    "pan":        {"label":"PAN Info",          "icon":"📄", "param":"pan"},
-    "vehicle":    {"label":"Vehicle Info",      "icon":"🚗", "param":"vehicle"},
-    "veh2num":    {"label":"Vehicle → Number",  "icon":"🔁", "param":"vehicle"},
-    "challan":    {"label":"Challan Check",     "icon":"🚨", "param":"vehicle"},
-    "bomber":     {"label":"SMS Bomber",        "icon":"💣", "param":"number"},
-    "adv":        {"label":"Advanced Lookup",   "icon":"⚡", "param":"num"},
-    "paytm":      {"label":"Paytm Info",        "icon":"💰", "param":"num"},
-    "imei":       {"label":"IMEI Info",         "icon":"📱", "param":"imei"},
-    "calltracer": {"label":"Call Tracer",       "icon":"📡", "param":"num"},
-    "ifsc":       {"label":"IFSC Info",         "icon":"🏦", "param":"ifsc"},
-    "pincode":    {"label":"Pincode Info",      "icon":"📍", "param":"pin"},
-    "ip":         {"label":"IP Lookup",         "icon":"🌐", "param":"ip"},
-    "ff":         {"label":"Free Fire Info",    "icon":"🎮", "param":"uid"},
-    "bgmi":       {"label":"BGMI Info",         "icon":"🔫", "param":"uid"},
-    "snap":       {"label":"Snapchat Info",     "icon":"👻", "param":"username"},
-    "email":      {"label":"Email → Info",      "icon":"📧", "param":"email"},
-    "git":        {"label":"GitHub Lookup",     "icon":"🐙", "param":"username"},
-    "insta":      {"label":"Instagram Info",    "icon":"📸", "param":"username"},
-    "tg":         {"label":"Telegram Info",     "icon":"✈️", "param":"info"},
-    "tgidinfo":   {"label":"Telegram ID → Num", "icon":"🆔", "param":"id"},
-    "numleak":    {"label":"Number Leak",       "icon":"💧", "param":"num"},
-}
+# ----------------------------- DB CORE --------------------------------
+def db_connect():
+    if DATABASE_URL:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        conn.autocommit = True
+        return conn
+    else:
+        conn = sqlite3.connect(os.path.join(APP_DIR, "osint.db"), timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-# ---------------------------------------------------------------------
-# DATABASE
-# ---------------------------------------------------------------------
-def db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+def db_fetch(sql, args=()):
+    conn = db_connect()
+    try:
+        if DATABASE_URL:
+            sql = sql.replace('?', '%s')
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(sql, args)
+            return [dict(r) for r in cur.fetchall()]
+        else:
+            cur = conn.cursor()
+            cur.execute(sql, args)
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+def db_one(sql, args=()):
+    rows = db_fetch(sql, args)
+    return rows[0] if rows else None
+
+def db_write(sql, args=()):
+    conn = db_connect()
+    try:
+        if DATABASE_URL:
+            sql = sql.replace('?', '%s')
+            cur = conn.cursor()
+            try:
+                cur.execute(sql + " RETURNING id", args)
+                return cur.fetchone()[0]
+            except Exception:
+                return None
+        else:
+            cur = conn.cursor()
+            cur.execute(sql, args)
+            conn.commit()
+            return cur.lastrowid
+    finally:
+        conn.close()
 
 def init_db():
+    conn = db_connect()
     try:
-        with DB_LOCK:
-            c = db()
-            cur = c.cursor()
-            cur.executescript("""
-            CREATE TABLE IF NOT EXISTS api_keys (
+        if DATABASE_URL:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id SERIAL PRIMARY KEY,
+                    key VARCHAR(255) UNIQUE NOT NULL,
+                    name VARCHAR(60) DEFAULT '',
+                    by_name VARCHAR(60) DEFAULT '',
+                    tools TEXT DEFAULT 'all',
+                    created_at VARCHAR(50) NOT NULL,
+                    expires_at VARCHAR(50),
+                    req_limit INTEGER DEFAULT 0,
+                    req_count INTEGER DEFAULT 0,
+                    status VARCHAR(20) DEFAULT 'active',
+                    price REAL DEFAULT 0,
+                    note VARCHAR(300) DEFAULT '',
+                    last_used VARCHAR(50)
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS logs (
+                    id SERIAL PRIMARY KEY,
+                    key VARCHAR(255),
+                    name VARCHAR(60),
+                    tool VARCHAR(50),
+                    query TEXT,
+                    ip VARCHAR(50),
+                    status VARCHAR(20),
+                    ts VARCHAR(50)
+                );
+            """)
+        else:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript("""
+            CREATE TABLE IF NOT EXISTS api_keys(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key_value TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL,
-                tools TEXT NOT NULL,
+                key TEXT UNIQUE NOT NULL,
+                name TEXT DEFAULT '',
+                by_name TEXT DEFAULT '',
+                tools TEXT DEFAULT 'all',
+                created_at TEXT NOT NULL,
                 expires_at TEXT,
-                request_limit INTEGER DEFAULT 0,
-                request_used INTEGER DEFAULT 0,
-                suspended INTEGER DEFAULT 0,
+                req_limit INTEGER DEFAULT 0,
+                req_count INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'active',
                 price REAL DEFAULT 0,
-                device_limit INTEGER DEFAULT 1,
-                devices TEXT DEFAULT '[]',
-                created_at TEXT NOT NULL
+                note TEXT DEFAULT '',
+                last_used TEXT
             );
-            CREATE TABLE IF NOT EXISTS logs (
+            CREATE TABLE IF NOT EXISTS logs(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key_value TEXT,
-                key_name TEXT,
+                key TEXT,
+                name TEXT,
                 tool TEXT,
-                input TEXT,
+                query TEXT,
                 ip TEXT,
-                device TEXT,
                 status TEXT,
-                ts TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-                k TEXT PRIMARY KEY,
-                v TEXT
-            );
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE,
-                password TEXT,
-                device_limit INTEGER DEFAULT 1,
-                devices TEXT DEFAULT '[]',
-                api_key TEXT,
-                active INTEGER DEFAULT 1,
-                created_at TEXT
+                ts TEXT
             );
             """)
-            c.commit()
-            for k, v in [("upstream_key",""), ("bot_token",""), ("bot_enabled","0"), ("bot_admin_chat","")]:
-                cur.execute("INSERT OR IGNORE INTO settings (k,v) VALUES (?,?)", (k, v))
-            c.commit()
-            c.close()
-        print("Database initialized successfully.")
-    except Exception as e:
-        print(f"Database initialization error: {e}")
+        conn.commit()
+    finally:
+        conn.close()
 
-# Initialize DB immediately when the module loads
-init_db()
+# ----------------------------- TIME ------------------------------
+def now_utc():
+    return datetime.now(timezone.utc)
 
-def get_setting(k, default=""):
-    with DB_LOCK:
-        c = db(); r = c.execute("SELECT v FROM settings WHERE k=?", (k,)).fetchone(); c.close()
-        return r["v"] if r else default
+def iso(dt):
+    if dt is None: return None
+    if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat(timespec="seconds")
 
-def set_setting(k, v):
-    with DB_LOCK:
-        c = db()
-        c.execute("INSERT INTO settings (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=?", (k, v, v))
-        c.commit(); c.close()
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-def parse_dt(s):
+def parse_iso(s):
     if not s: return None
     try:
-        return datetime.fromisoformat(s.replace("Z","+00:00"))
+        d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        if d.tzinfo is None: d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(timezone.utc)
     except Exception:
         return None
 
-def is_expired(s):
-    dt = parse_dt(s)
-    if not dt: return False
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) > dt
+def ms_to_iso(ms):
+    try: return iso(datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc))
+    except Exception: return None
 
-# ---------------------------------------------------------------------
-# GLOBAL ERROR HANDLER (Prevents HTTP 500 HTML crashes)
-# ---------------------------------------------------------------------
-@app.errorhandler(Exception)
-def handle_exception(e):
-    return jsonify({"ok": False, "error": str(e)}), 500
-
-# ---------------------------------------------------------------------
-# AUTH DECORATOR
-# ---------------------------------------------------------------------
+# ----------------------------- AUTH ------------------------------
 def admin_required(f):
     @wraps(f)
     def wrapper(*a, **kw):
         if not session.get("admin"):
-            return jsonify({"ok": False, "error": "unauthorized"}), 401
+            if request.path.startswith("/admin/api/"):
+                return jsonify(ok=False, error="Unauthorized"), 401
+            return redirect("/admin/login")
         return f(*a, **kw)
     return wrapper
 
-# ---------------------------------------------------------------------
-# ADMIN AUTH
-# ---------------------------------------------------------------------
-@app.route("/api/admin/login", methods=["POST"])
-def admin_login():
-    data = request.get_json(silent=True) or {}
-    u = (data.get("username") or "").strip()
-    p = (data.get("password") or "").strip()
-    if u == ADMIN_USER and p == ADMIN_PASS:
-        session["admin"] = True
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "error": "Invalid credentials"}), 401
+# ----------------------------- KEY HELPERS -----------------------
+def key_state(row):
+    if not row: return row
+    exp = parse_iso(row.get("expires_at"))
+    row["expired"] = bool(exp and now_utc() > exp)
+    row["expires_ms"] = int(exp.timestamp() * 1000) if exp else None
+    lim = int(row.get("req_limit") or 0)
+    used = int(row.get("req_count") or 0)
+    row["remaining"] = max(0, lim - used) if lim > 0 else None
+    return row
 
-@app.route("/api/admin/logout", methods=["POST"])
-def admin_logout():
-    session.pop("admin", None)
-    return jsonify({"ok": True})
-
-@app.route("/api/admin/check", methods=["GET"])
-def admin_check():
-    return jsonify({"ok": True, "admin": bool(session.get("admin"))})
-
-# ---------------------------------------------------------------------
-# KEY GENERATION HELPERS
-# ---------------------------------------------------------------------
-def gen_key(prefix="VX"):
-    alphabet = string.ascii_uppercase + string.digits
-    body = "".join(random.choice(alphabet) for _ in range(20))
-    return f"{prefix}-{body[:5]}-{body[5:10]}-{body[10:15]}-{body[15:20]}"
-
-# ---------------------------------------------------------------------
-# ADMIN: API KEYS
-# ---------------------------------------------------------------------
-@app.route("/api/admin/keys", methods=["GET"])
-@admin_required
-def list_keys():
-    with DB_LOCK:
-        c = db()
-        rows = c.execute("SELECT * FROM api_keys ORDER BY id DESC").fetchall()
-        c.close()
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["tools"] = json.loads(d["tools"]) if d["tools"] not in ("all","") else "all"
-        d["devices"] = json.loads(d["devices"] or "[]")
-        d["expired"] = is_expired(d["expires_at"])
-        out.append(d)
-    return jsonify({"ok": True, "keys": out})
-
-@app.route("/api/admin/keys", methods=["POST"])
-@admin_required
-def create_key():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    if not name:
-        return jsonify({"ok": False, "error": "Key name is required"}), 400
+def check_key(key, tool_id):
+    row = db_one("SELECT * FROM api_keys WHERE key = ?", (key,))
+    if not row: return None, (jsonify(ok=False, error="Invalid API key"), 401)
+    if row["status"] != "active": return None, (jsonify(ok=False, error="API key suspended"), 403)
+    exp = parse_iso(row["expires_at"])
+    if exp and now_utc() > exp: return None, (jsonify(ok=False, error="API key expired"), 403)
     
-    key_value = (data.get("key_value") or "").strip()
-    if not key_value:
-        key_value = gen_key()
-        
-    tools = data.get("tools", "all")
-    if isinstance(tools, list):
-        tools = json.dumps([t for t in tools if t in TOOLS])
-    else:
-        tools = "all"
-        
-    expires_at = data.get("expires_at") or None
-    
-    # Safe conversions
-    try: request_limit = int(data.get("request_limit") or 0)
-    except: request_limit = 0
-    try: price = float(data.get("price") or 0)
-    except: price = 0.0
-    try: device_limit = int(data.get("device_limit") or 1)
-    except: device_limit = 1
+    allowed = (row["tools"] or "all").split(",")
+    if "all" not in allowed and tool_id not in allowed:
+        return None, (jsonify(ok=False, error=f"Key not allowed for tool '{tool_id}'"), 403)
+
+    lim = int(row["req_limit"] or 0)
+    if lim > 0 and int(row["req_count"] or 0) >= lim:
+        return None, (jsonify(ok=False, error="Request limit reached"), 429)
+
+    return row, None
+
+def log_request(key, name, tool, query, status):
+    db_write(
+        "INSERT INTO logs(key,name,tool,query,ip,status,ts) VALUES (?,?,?,?,?,?,?)",
+        (key, name, tool, str(query)[:400], request.headers.get("X-Forwarded-For", request.remote_addr or ""), status, iso(now_utc()))
+    )
+
+# ----------------------------- PROXY API -------------------------
+@app.route("/api/<tool_id>", methods=["GET"])
+def proxy(tool_id):
+    t = TOOL_MAP.get(tool_id)
+    if not t: return jsonify(ok=False, error="Unknown endpoint"), 404
+
+    user_key = (request.args.get("key") or "").strip()
+    if not user_key: return jsonify(ok=False, error="Missing key parameter"), 401
+
+    row, err = check_key(user_key, tool_id)
+    if err:
+        log_request(user_key, (row or {}).get("name", ""), tool_id, request.query_string.decode()[:300], "DENIED")
+        return err
+
+    params = {}
+    for p in t["params"]:
+        v = (request.args.get(p) or "").strip()
+        if not v: return jsonify(ok=False, error=f"Missing parameter '{p}'"), 400
+        params[p] = v
+
+    payload = dict(params)
+    payload["key"] = UPSTREAM_KEY
 
     try:
-        with DB_LOCK:
-            c = db()
-            c.execute("""INSERT INTO api_keys
-                (key_value,name,tools,expires_at,request_limit,request_used,suspended,price,device_limit,devices,created_at)
-                VALUES (?,?,?,?,?,0,0,?,?,?,?)""",
-                (key_value, name, tools, expires_at, request_limit, price, device_limit, "[]", now_iso()))
-            c.commit()
-            c.close()
-    except sqlite3.IntegrityError:
-        return jsonify({"ok": False, "error": "Key already exists"}), 400
-    return jsonify({"ok": True, "key": key_value})
-
-@app.route("/api/admin/keys/<int:kid>", methods=["PUT"])
-@admin_required
-def edit_key(kid):
-    data = request.get_json(silent=True) or {}
-    fields, vals = [], []
-    for f in ("name","expires_at"):
-        if f in data:
-            fields.append(f"{f}=?"); vals.append(data[f])
-    if "tools" in data:
-        t = data["tools"]
-        if isinstance(t, list):
-            t = json.dumps([x for x in t if x in TOOLS])
-        else:
-            t = "all"
-        fields.append("tools=?"); vals.append(t)
-    if "request_limit" in data:
-        try: fields.append("request_limit=?"); vals.append(int(data["request_limit"] or 0))
-        except: pass
-    if "price" in data:
-        try: fields.append("price=?"); vals.append(float(data["price"] or 0))
-        except: pass
-    if "device_limit" in data:
-        try: fields.append("device_limit=?"); vals.append(int(data["device_limit"] or 1))
-        except: pass
-    if "suspended" in data:
-        fields.append("suspended=?"); vals.append(1 if data["suspended"] else 0)
-    if not fields:
-        return jsonify({"ok": False, "error": "Nothing to update"}), 400
-    vals.append(kid)
-    with DB_LOCK:
-        c = db()
-        c.execute(f"UPDATE api_keys SET {','.join(fields)} WHERE id=?", vals)
-        c.commit(); c.close()
-    return jsonify({"ok": True})
-
-@app.route("/api/admin/keys/<int:kid>", methods=["DELETE"])
-@admin_required
-def delete_key(kid):
-    with DB_LOCK:
-        c = db()
-        c.execute("DELETE FROM api_keys WHERE id=?", (kid,))
-        c.commit(); c.close()
-    return jsonify({"ok": True})
-
-@app.route("/api/admin/keys/<int:kid>/restart", methods=["POST"])
-@admin_required
-def restart_key(kid):
-    with DB_LOCK:
-        c = db()
-        c.execute("UPDATE api_keys SET request_used=0 WHERE id=?", (kid,))
-        c.commit(); c.close()
-    return jsonify({"ok": True})
-
-@app.route("/api/admin/keys/<int:kid>/suspend", methods=["POST"])
-@admin_required
-def suspend_key(kid):
-    with DB_LOCK:
-        c = db()
-        r = c.execute("SELECT suspended FROM api_keys WHERE id=?", (kid,)).fetchone()
-        if not r:
-            c.close(); return jsonify({"ok": False, "error": "Not found"}), 404
-        new = 0 if r["suspended"] else 1
-        c.execute("UPDATE api_keys SET suspended=? WHERE id=?", (new, kid))
-        c.commit(); c.close()
-    return jsonify({"ok": True, "suspended": new})
-
-# ---------------------------------------------------------------------
-# ADMIN: LOGS
-# ---------------------------------------------------------------------
-@app.route("/api/admin/logs", methods=["GET"])
-@admin_required
-def list_logs():
-    limit = min(int(request.args.get("limit", 200)), 1000)
-    key_filter = request.args.get("key", "").strip()
-    with DB_LOCK:
-        c = db()
-        if key_filter:
-            rows = c.execute("SELECT * FROM logs WHERE key_value LIKE ? ORDER BY id DESC LIMIT ?",
-                             (f"%{key_filter}%", limit)).fetchall()
-        else:
-            rows = c.execute("SELECT * FROM logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        c.close()
-    return jsonify({"ok": True, "logs": [dict(r) for r in rows]})
-
-# ---------------------------------------------------------------------
-# ADMIN: STATS
-# ---------------------------------------------------------------------
-@app.route("/api/admin/stats", methods=["GET"])
-@admin_required
-def stats():
-    now = datetime.now(timezone.utc)
-    def since(days): return (now - timedelta(days=days)).isoformat()
-    with DB_LOCK:
-        c = db()
-        total_keys = c.execute("SELECT COUNT(*) n FROM api_keys").fetchone()["n"]
-        active_keys = c.execute("SELECT COUNT(*) n FROM api_keys WHERE suspended=0").fetchone()["n"]
-        total_requests = c.execute("SELECT COALESCE(SUM(request_used),0) n FROM api_keys").fetchone()["n"]
-        total_revenue = c.execute("SELECT COALESCE(SUM(price),0) n FROM api_keys").fetchone()["n"]
-        today_rev = c.execute("SELECT COALESCE(SUM(price),0) n FROM api_keys WHERE created_at >= ?",
-                              (now.replace(hour=0,minute=0,second=0,microsecond=0).isoformat(),)).fetchone()["n"]
-        rev_7   = c.execute("SELECT COALESCE(SUM(price),0) n FROM api_keys WHERE created_at >= ?", (since(7),)).fetchone()["n"]
-        rev_30  = c.execute("SELECT COALESCE(SUM(price),0) n FROM api_keys WHERE created_at >= ?", (since(30),)).fetchone()["n"]
-        rev_365 = c.execute("SELECT COALESCE(SUM(price),0) n FROM api_keys WHERE created_at >= ?", (since(365),)).fetchone()["n"]
-        chart = []
-        for i in range(13, -1, -1):
-            day = (now - timedelta(days=i)).replace(hour=0,minute=0,second=0,microsecond=0)
-            nxt = day + timedelta(days=1)
-            r = c.execute("SELECT COALESCE(SUM(price),0) n FROM api_keys WHERE created_at >= ? AND created_at < ?",
-                          (day.isoformat(), nxt.isoformat())).fetchone()["n"]
-            chart.append({"day": day.strftime("%d %b"), "value": round(r,2)})
-        top = c.execute("SELECT tool, COUNT(*) n FROM logs GROUP BY tool ORDER BY n DESC LIMIT 8").fetchall()
-        c.close()
-    return jsonify({
-        "ok": True, "total_keys": total_keys, "active_keys": active_keys,
-        "total_requests": total_requests, "total_revenue": round(total_revenue,2),
-        "today_revenue": round(today_rev,2), "revenue_7": round(rev_7,2),
-        "revenue_30": round(rev_30,2), "revenue_365": round(rev_365,2),
-        "chart": chart, "top_tools": [{"tool": r["tool"], "count": r["n"]} for r in top],
-        "tools": TOOLS,
-    })
-
-# ---------------------------------------------------------------------
-# ADMIN: SETTINGS
-# ---------------------------------------------------------------------
-@app.route("/api/admin/settings", methods=["GET"])
-@admin_required
-def get_settings():
-    return jsonify({"ok": True, "settings": {
-        "upstream_key": get_setting("upstream_key"),
-        "bot_token":    get_setting("bot_token"),
-        "bot_enabled":  get_setting("bot_enabled"),
-        "bot_admin_chat": get_setting("bot_admin_chat"),
-    }})
-
-@app.route("/api/admin/settings", methods=["POST"])
-@admin_required
-def save_settings():
-    data = request.get_json(silent=True) or {}
-    for k in ("upstream_key","bot_token","bot_enabled","bot_admin_chat"):
-        if k in data:
-            set_setting(k, str(data[k] or ""))
-    return jsonify({"ok": True})
-
-# ---------------------------------------------------------------------
-# ADMIN: USERS
-# ---------------------------------------------------------------------
-@app.route("/api/admin/users", methods=["GET"])
-@admin_required
-def list_users():
-    with DB_LOCK:
-        c = db()
-        rows = c.execute("SELECT id,username,device_limit,api_key,active,created_at FROM users ORDER BY id DESC").fetchall()
-        c.close()
-    return jsonify({"ok": True, "users": [dict(r) for r in rows]})
-
-@app.route("/api/admin/users/<int:uid>", methods=["DELETE"])
-@admin_required
-def delete_user(uid):
-    with DB_LOCK:
-        c = db()
-        c.execute("DELETE FROM users WHERE id=?", (uid,))
-        c.commit(); c.close()
-    return jsonify({"ok": True})
-
-# ---------------------------------------------------------------------
-# PUBLIC PROXY
-# ---------------------------------------------------------------------
-@app.after_request
-def add_cors(resp):
-    resp.headers["Access-Control-Allow-Origin"]  = "*"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Device-Id, X-API-Key"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return resp
-
-def log_request(key_value, key_name, tool, inp, status):
-    with DB_LOCK:
-        c = db()
-        c.execute("INSERT INTO logs (key_value,key_name,tool,input,ip,device,status,ts) VALUES (?,?,?,?,?,?,?,?)",
-                  (key_value, key_name, tool, inp,
-                   request.headers.get("X-Forwarded-For", request.remote_addr),
-                   request.headers.get("X-Device-Id",""),
-                   status, now_iso()))
-        c.commit(); c.close()
-
-@app.route("/api/<tool>", methods=["GET","POST","OPTIONS"])
-def proxy(tool):
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if tool == "admin":
-        return jsonify({"ok": False, "error": "not found"}), 404
-    if tool not in TOOLS:
-        return jsonify({"ok": False, "error": f"Unknown tool '{tool}'"}), 404
-
-    key_value = (request.args.get("key") or request.headers.get("X-API-Key") or "").strip()
-    if not key_value:
-        return jsonify({"ok": False, "error": "Missing API key"}), 401
-
-    with DB_LOCK:
-        c = db()
-        row = c.execute("SELECT * FROM api_keys WHERE key_value=?", (key_value,)).fetchone()
-        c.close()
-
-    if not row:
-        log_request(key_value, "", tool, request.args.get(TOOLS[tool]["param"],""), "invalid_key")
-        return jsonify({"ok": False, "error": "Invalid API key"}), 401
-
-    row = dict(row)
-
-    if row["suspended"]:
-        log_request(key_value, row["name"], tool, request.args.get(TOOLS[tool]["param"],""), "suspended")
-        return jsonify({"ok": False, "error": "Key suspended"}), 403
-
-    if is_expired(row["expires_at"]):
-        log_request(key_value, row["name"], tool, request.args.get(TOOLS[tool]["param"],""), "expired")
-        return jsonify({"ok": False, "error": "Key expired"}), 403
-
-    if row["tools"] != "all":
-        try: allowed = json.loads(row["tools"])
-        except Exception: allowed = []
-        if tool not in allowed:
-            log_request(key_value, row["name"], tool, request.args.get(TOOLS[tool]["param"],""), "tool_denied")
-            return jsonify({"ok": False, "error": f"Tool '{tool}' not allowed for this key"}), 403
-
-    if row["request_limit"] and row["request_used"] >= row["request_limit"]:
-        log_request(key_value, row["name"], tool, request.args.get(TOOLS[tool]["param"],""), "limit_reached")
-        return jsonify({"ok": False, "error": "Request limit reached"}), 429
-
-    device_id = (request.headers.get("X-Device-Id") or "").strip()
-    if not device_id:
-        device_id = hashlib.sha256((request.headers.get("User-Agent","") + request.remote_addr).encode()).hexdigest()[:32]
-    devices = json.loads(row["devices"] or "[]")
-    if device_id not in devices:
-        if len(devices) >= int(row["device_limit"] or 1):
-            log_request(key_value, row["name"], tool, request.args.get(TOOLS[tool]["param"],""), "device_limit")
-            return jsonify({"ok": False, "error": "Device limit reached. Contact admin."}), 403
-        devices.append(device_id)
-        with DB_LOCK:
-            c = db()
-            c.execute("UPDATE api_keys SET devices=? WHERE id=?", (json.dumps(devices), row["id"]))
-            c.commit(); c.close()
-
-    upstream_key = get_setting("upstream_key")
-    if not upstream_key:
-        return jsonify({"ok": False, "error": "Upstream key not configured by admin"}), 500
-
-    params = {k: v for k, v in request.args.items() if k != "key"}
-    params["key"] = upstream_key
-    url = f"{UPSTREAM_BASE}/{tool}"
-    try:
-        if request.method == "POST":
-            r = requests.post(url, params=params, json=request.get_json(silent=True) or {}, timeout=30)
-        else:
-            r = requests.get(url, params=params, timeout=30)
-        try: body = r.json()
-        except Exception: body = {"raw": r.text}
-    except requests.exceptions.Timeout:
-        log_request(key_value, row["name"], tool, params.get(TOOLS[tool]["param"],""), "timeout")
-        return jsonify({"ok": False, "error": "Upstream timeout"}), 504
+        up = requests.get(f"{UPSTREAM_BASE}/{t['path']}", params=payload, timeout=45)
+        content = up.content
+        ctype = up.headers.get("Content-Type", "application/json")
+    except requests.Timeout:
+        log_request(user_key, row["name"], tool_id, str(params), "TIMEOUT")
+        return jsonify(ok=False, error="Upstream timeout"), 504
     except Exception as e:
-        log_request(key_value, row["name"], tool, params.get(TOOLS[tool]["param"],""), f"error:{e}")
-        return jsonify({"ok": False, "error": f"Upstream error: {e}"}), 502
+        log_request(user_key, row["name"], tool_id, str(params), "ERROR")
+        return jsonify(ok=False, error=f"Upstream error: {e}"), 502
 
-    # Clean up old developer tags and add yours
-    if isinstance(body, dict):
-        for old_key in ["by", "developer", "credit", "credits", "owner", "author"]:
-            if old_key in body:
-                del body[old_key]
-        body["by"] = "DEVELOPER BY @dark_MARLBORO"
-
-    with DB_LOCK:
-        c = db()
-        c.execute("UPDATE api_keys SET request_used = request_used + 1 WHERE id=?", (row["id"],))
-        c.commit(); c.close()
-
-    inp = params.get(TOOLS[tool]["param"], "")
-    log_request(key_value, row["name"], tool, str(inp)[:200], "ok")
-    return jsonify(body)
-
-# ---------------------------------------------------------------------
-# CUSTOMER PORTAL LOGIN
-# ---------------------------------------------------------------------
-@app.route("/api/user/login", methods=["POST"])
-def user_login():
-    data = request.get_json(silent=True) or {}
-    u = (data.get("username") or "").strip()
-    p = (data.get("password") or "").strip()
-    device_id = (data.get("device_id") or "").strip()
-    with DB_LOCK:
-        c = db()
-        row = c.execute("SELECT * FROM users WHERE username=? AND password=?", (u, p)).fetchone()
-        if not row:
-            c.close(); return jsonify({"ok": False, "error": "Invalid credentials"}), 401
-        row = dict(row)
-        if not row["active"]:
-            c.close(); return jsonify({"ok": False, "error": "Account disabled"}), 403
-        devices = json.loads(row["devices"] or "[]")
-        if device_id and device_id not in devices:
-            if len(devices) >= int(row["device_limit"] or 1):
-                c.close(); return jsonify({"ok": False, "error": "Device limit reached"}), 403
-            devices.append(device_id)
-            c.execute("UPDATE users SET devices=? WHERE id=?", (json.dumps(devices), row["id"]))
-            c.commit()
-        c.close()
-    return jsonify({"ok": True, "api_key": row["api_key"], "username": row["username"]})
-
-# =====================================================================
-#  TELEGRAM BOT
-# =====================================================================
-BOT_STATE = {"offset": 0, "running": False}
-
-def tg_api(token, method, payload=None):
-    try:
-        url = f"https://api.telegram.org/bot{token}/{method}"
-        r = requests.post(url, json=payload or {}, timeout=35)
-        return r.json()
-    except Exception:
-        return {}
-
-def bot_send(token, chat_id, text):
-    tg_api(token, "sendMessage", {"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
-
-def bot_create_login(token, chat_id, username, password, devices):
-    try:
-        devices = int(devices)
-    except Exception:
-        devices = 1
-    if devices < 1: devices = 1
-
-    kv = gen_key()
-    exp = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-
-    with DB_LOCK:
-        c = db()
-        existing = c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
-
-        if existing:
-            c.execute("""UPDATE users SET password=?, device_limit=?, devices='[]', api_key=?, active=1
-                         WHERE username=?""", (password, devices, kv, username))
-            action = "updated"
-        else:
-            c.execute("""INSERT INTO users (username,password,device_limit,devices,api_key,active,created_at)
-                         VALUES (?,?,?,?,?,1,?)""",
-                      (username, password, devices, "[]", kv, now_iso()))
-            action = "created"
-
+    if "application/json" in ctype:
         try:
-            c.execute("""INSERT INTO api_keys
-                (key_value,name,tools,expires_at,request_limit,request_used,suspended,price,device_limit,devices,created_at)
-                VALUES (?,?,?,?,?,0,0,?,?,?,?)""",
-                (kv, username, "all", exp, 1000, 0, devices, "[]", now_iso()))
-        except sqlite3.IntegrityError:
-            pass
-        c.commit(); c.close()
-
-    bot_send(token, chat_id,
-        f"✅ <b>Website Login {action.title()}</b>\n\n"
-        f"👤 Username: <code>{username}</code>\n"
-        f"🔑 Password: <code>{password}</code>\n"
-        f"📱 Devices: {devices}\n"
-        f"🗝️ API Key: <code>{kv}</code>\n"
-        f"⏳ Expires: 30 days\n"
-        f"📊 Limit: 1000 requests\n\n"
-        f"🔐 Login at: <code>/api/user/login</code>")
-
-def bot_loop():
-    while True:
-        try:
-            if get_setting("bot_enabled") != "1":
-                time.sleep(5); continue
-            token = get_setting("bot_token").strip()
-            if not token:
-                time.sleep(5); continue
-
-            res = tg_api(token, "getUpdates", {"offset": BOT_STATE["offset"] + 1, "timeout": 25})
-            if not res.get("ok"):
-                time.sleep(5); continue
-
-            for upd in res.get("result", []):
-                BOT_STATE["offset"] = max(BOT_STATE["offset"], upd["update_id"])
-                msg = upd.get("message") or {}
-                chat_id = msg.get("chat", {}).get("id")
-                text = (msg.get("text") or "").strip()
-                if not chat_id or not text:
-                    continue
-
-                admin_chat = get_setting("bot_admin_chat").strip()
-                if not admin_chat:
-                    set_setting("bot_admin_chat", str(chat_id))
-                    admin_chat = str(chat_id)
-
-                if str(chat_id) != admin_chat:
-                    bot_send(token, chat_id, "⛔ Unauthorized. This bot is private.")
-                    continue
-
-                if text.startswith("/start"):
-                    bot_send(token, chat_id,
-                        "🛰️ <b>VERNEX BOT</b>\n\n"
-                        "<b>Commands:</b>\n"
-                        "/loginkey &lt;username&gt; &lt;password&gt; &lt;devices&gt;\n"
-                        "   → create website login + API key\n"
-                        "/generate &lt;username&gt; &lt;password&gt; &lt;devices&gt;\n"
-                        "   → same as /loginkey\n"
-                        "/newkey &lt;name&gt; &lt;days&gt; &lt;limit&gt; &lt;price&gt;\n"
-                        "   → create API key only\n"
-                        "/keys — list recent keys\n"
-                        "/stats — quick statistics\n\n"
-                        "<i>Example:</i>\n"
-                        "<code>/loginkey rahul rahul900P0 1</code>")
-
-                elif text.startswith("/loginkey") or text.startswith("/generate"):
-                    parts = text.split()
-                    if len(parts) < 4:
-                        bot_send(token, chat_id,
-                            "⚠️ <b>Usage:</b>\n"
-                            "<code>/loginkey &lt;username&gt; &lt;password&gt; &lt;devices&gt;</code>\n\n"
-                            "<i>Example:</i>\n"
-                            "<code>/loginkey rahul rahul900P0 1</code>")
-                        continue
-                    username, password, devs = parts[1], parts[2], parts[3]
-                    try:
-                        bot_create_login(token, chat_id, username, password, devs)
-                    except Exception as e:
-                        bot_send(token, chat_id, f"❌ Failed: <code>{e}</code>")
-
-                elif text.startswith("/newkey"):
-                    parts = text.split()
-                    if len(parts) < 5:
-                        bot_send(token, chat_id, "Usage: /newkey &lt;name&gt; &lt;days&gt; &lt;limit&gt; &lt;price&gt;")
-                        continue
-                    name = parts[1]
-                    try: days = int(parts[2])
-                    except: days = 30
-                    try: limit = int(parts[3])
-                    except: limit = 1000
-                    try: price = float(parts[4])
-                    except: price = 0
-                    kv = gen_key()
-                    exp = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
-                    with DB_LOCK:
-                        c = db()
-                        c.execute("""INSERT INTO api_keys
-                            (key_value,name,tools,expires_at,request_limit,request_used,suspended,price,device_limit,devices,created_at)
-                            VALUES (?,?,?,?,?,0,0,?,?,?,?)""",
-                            (kv, name, "all", exp, limit, price, 1, "[]", now_iso()))
-                        c.commit(); c.close()
-                    bot_send(token, chat_id,
-                        f"✅ <b>API Key Created</b>\n\n"
-                        f"🏷️ Name: {name}\n"
-                        f"🗝️ Key: <code>{kv}</code>\n"
-                        f"⏳ {days} days\n"
-                        f"📊 {limit} requests\n"
-                        f"💰 ₹{price}")
-
-                elif text.startswith("/keys"):
-                    with DB_LOCK:
-                        c = db()
-                        rows = c.execute("SELECT name,key_value,request_used,request_limit,suspended FROM api_keys ORDER BY id DESC LIMIT 10").fetchall()
-                        c.close()
-                    if not rows:
-                        bot_send(token, chat_id, "No keys yet.")
-                    else:
-                        lines = ["🗝️ <b>Recent Keys</b>\n"]
-                        for r in rows:
-                            st = "⛔" if r["suspended"] else "✅"
-                            lines.append(f"{st} <b>{r['name']}</b>\n<code>{r['key_value']}</code>\n{r['request_used']}/{r['request_limit']}\n")
-                        bot_send(token, chat_id, "\n".join(lines))
-
-                elif text.startswith("/stats"):
-                    with DB_LOCK:
-                        c = db()
-                        tk = c.execute("SELECT COUNT(*) n FROM api_keys").fetchone()["n"]
-                        tr = c.execute("SELECT COALESCE(SUM(request_used),0) n FROM api_keys").fetchone()["n"]
-                        rev = c.execute("SELECT COALESCE(SUM(price),0) n FROM api_keys").fetchone()["n"]
-                        c.close()
-                    bot_send(token, chat_id,
-                        f"📊 <b>STATS</b>\n\n🗝️ Keys: {tk}\n📡 Requests: {tr}\n💰 Revenue: ₹{round(rev,2)}")
-
+            data = up.json()
+            if isinstance(data, dict):
+                data.pop("by", None) 
+                if row.get("by_name"):
+                    data["by"] = row["by_name"]
+                else:
+                    data["by"] = "SHAYAN_EXPLORER"
+                
+                db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?", (iso(now_utc()), row["id"]))
+                log_request(user_key, row["name"], tool_id, str(params), "OK")
+                return jsonify(data), up.status_code
         except Exception:
-            time.sleep(5)
+            pass
 
-# Start bot thread at module level for Deplexo
-def start_bot_thread():
-    t = threading.Thread(target=bot_loop, daemon=True)
-    t.start()
+    db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?", (iso(now_utc()), row["id"]))
+    log_request(user_key, row["name"], tool_id, str(params), "OK")
+    return Response(content, status=up.status_code, content_type=ctype)
 
-start_bot_thread()
+# ----------------------------- ROUTES ----------------------------
+@app.route("/")
+def root():
+    return redirect("/admin")
 
-# =====================================================================
-#  FRONTEND (SPA)
-# =====================================================================
-HTML = r"""<!DOCTYPE html>
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or request.form
+        u = (data.get("username") or "").strip()
+        p = (data.get("password") or "").strip()
+        if u == ADMIN_USER and p == ADMIN_PASS:
+            session["admin"] = True
+            return redirect("/admin")
+        return Response(LOGIN_HTML.replace("__ERR__", "Invalid username or password"), 401, content_type="text/html")
+    return Response(LOGIN_HTML.replace("__ERR__", ""), content_type="text/html")
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.clear()
+    return redirect("/admin/login")
+
+@app.route("/admin")
+@admin_required
+def admin_home():
+    return Response(DASH_HTML, content_type="text/html")
+
+# ----------------------------- ADMIN API -------------------------
+@app.route("/admin/api/tools")
+@admin_required
+def api_tools():
+    return jsonify(ok=True, tools=TOOLS)
+
+@app.route("/admin/api/stats")
+@admin_required
+def api_stats():
+    keys = [key_state(k) for k in db_fetch("SELECT * FROM api_keys")]
+    total_keys = len(keys)
+    active_keys = sum(1 for k in keys if k["status"] == "active" and not k["expired"])
+    suspended = sum(1 for k in keys if k["status"] != "active")
+    expired = sum(1 for k in keys if k["expired"])
+
+    total_requests = sum(int(k["req_count"] or 0) for k in keys)
+    today = now_utc().date().isoformat()
+    today_requests = db_one("SELECT COUNT(*) c FROM logs WHERE substr(ts,1,10)=?", (today,))["c"]
+
+    rng = request.args.get("range", "30d")
+    days = {"today": 1, "7d": 7, "30d": 30, "90d": 90, "1y": 365, "all": 36500}.get(rng, 30)
+    start = now_utc() - timedelta(days=days)
+
+    rev_range = 0.0
+    for k in keys:
+        cd = parse_iso(k["created_at"])
+        if cd and cd >= start: rev_range += float(k["price"] or 0)
+
+    rev_total = sum(float(k["price"] or 0) for k in keys)
+
+    series = []
+    base = now_utc().date()
+    for i in range(13, -1, -1):
+        d = base - timedelta(days=i)
+        amt = 0.0
+        cnt = 0
+        for k in keys:
+            cd = parse_iso(k["created_at"])
+            if cd and cd.date() == d:
+                amt += float(k["price"] or 0)
+                cnt += 1
+        series.append({"date": d.isoformat(), "amount": round(amt, 2), "count": cnt})
+
+    return jsonify(ok=True, total_keys=total_keys, active_keys=active_keys, suspended_keys=suspended, expired_keys=expired,
+                   total_requests=total_requests, today_requests=today_requests, revenue_total=round(rev_total, 2), 
+                   revenue_range=round(rev_range, 2), range=rng, series=series)
+
+@app.route("/admin/api/keys", methods=["GET"])
+@admin_required
+def api_keys_list():
+    q = (request.args.get("q") or "").strip().lower()
+    rows = [key_state(r) for r in db_fetch("SELECT * FROM api_keys ORDER BY id DESC")]
+    if q:
+        rows = [r for r in rows if q in (r["key"] or "").lower() or q in (r["name"] or "").lower() or q in (r["tools"] or "").lower()]
+    return jsonify(ok=True, keys=rows)
+
+@app.route("/admin/api/keys", methods=["POST"])
+@admin_required
+def api_keys_create():
+    d = request.get_json(silent=True) or {}
+    key = (d.get("key") or "").strip()
+    if not key: key = "FT-" + secrets.token_hex(10).upper()
+    if len(key) < 6: return jsonify(ok=False, error="Custom key must be at least 6 characters"), 400
+    if not all(ch.isalnum() or ch in "-_." for ch in key): return jsonify(ok=False, error="Key may only contain letters, numbers, - _ ."), 400
+
+    if db_one("SELECT id FROM api_keys WHERE key = ?", (key,)): return jsonify(ok=False, error="This key already exists"), 409
+    name = (d.get("name") or "").strip()[:60] or "unnamed"
+    by_name = (d.get("by_name") or "").strip()[:60]
+
+    tools = d.get("tools") or ["all"]
+    if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
+    tools = [t for t in tools if t in TOOL_MAP]
+    tools_str = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
+
+    expires_ms = d.get("expires_ms")
+    expires_at = ms_to_iso(expires_ms) if expires_ms else None
+
+    try: req_limit = max(0, int(d.get("req_limit") or 0))
+    except Exception: req_limit = 0
+    try: price = max(0.0, float(d.get("price") or 0))
+    except Exception: price = 0.0
+    note = (d.get("note") or "").strip()[:300]
+
+    kid = db_write("INSERT INTO api_keys(key,name,by_name,tools,created_at,expires_at,req_limit,req_count,status,price,note) VALUES (?,?,?,?,?,?,?,0,'active',?,?)",
+                   (key, name, by_name, tools_str, iso(now_utc()), expires_at, req_limit, price, note))
+    
+    row = key_state(db_one("SELECT * FROM api_keys WHERE id = ?", (kid,)))
+    return jsonify(ok=True, key=row)
+
+@app.route("/admin/api/keys/<int:kid>", methods=["PATCH"])
+@admin_required
+def api_keys_edit(kid):
+    row = db_one("SELECT * FROM api_keys WHERE id = ?", (kid,))
+    if not row: return jsonify(ok=False, error="Key not found"), 404
+
+    d = request.get_json(silent=True) or {}
+    updates = {}
+    if "name" in d: updates["name"] = (d.get("name") or "").strip()[:60] or "unnamed"
+    if "by_name" in d: updates["by_name"] = (d.get("by_name") or "").strip()[:60]
+    if "tools" in d:
+        tools = d.get("tools") or ["all"]
+        if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
+        tools = [t for t in tools if t in TOOL_MAP]
+        updates["tools"] = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
+    if "req_limit" in d:
+        try: updates["req_limit"] = max(0, int(d.get("req_limit") or 0))
+        except Exception: updates["req_limit"] = 0
+    if "expires_ms" in d: updates["expires_at"] = ms_to_iso(d.get("expires_ms")) if d.get("expires_ms") else None
+    if "price" in d:
+        try: updates["price"] = max(0.0, float(d.get("price") or 0))
+        except Exception: updates["price"] = 0.0
+    if "note" in d: updates["note"] = (d.get("note") or "").strip()[:300]
+    if "status" in d and d["status"] in ("active", "suspended"): updates["status"] = d["status"]
+
+    if updates:
+        sets = ", ".join(f"{k}=?" for k in updates)
+        db_write(f"UPDATE api_keys SET {sets} WHERE id=?", tuple(updates.values()) + (kid,))
+
+    return jsonify(ok=True, key=key_state(db_one("SELECT * FROM api_keys WHERE id = ?", (kid,))))
+
+@app.route("/admin/api/keys/<int:kid>/reset", methods=["POST"])
+@admin_required
+def api_keys_reset(kid):
+    if not db_one("SELECT id FROM api_keys WHERE id=?", (kid,)): return jsonify(ok=False, error="Key not found"), 404
+    db_write("UPDATE api_keys SET req_count = 0 WHERE id = ?", (kid,))
+    return jsonify(ok=True)
+
+@app.route("/admin/api/keys/<int:kid>", methods=["DELETE"])
+@admin_required
+def api_keys_delete(kid):
+    db_write("DELETE FROM api_keys WHERE id = ?", (kid,))
+    return jsonify(ok=True)
+
+@app.route("/admin/api/logs")
+@admin_required
+def api_logs():
+    q = (request.args.get("q") or "").strip()
+    key = (request.args.get("key") or "").strip()
+    try: limit = min(1000, max(1, int(request.args.get("limit") or 200)))
+    except Exception: limit = 200
+
+    sql = "SELECT * FROM logs WHERE 1=1"
+    args = []
+    if key: sql += " AND key = ?"; args.append(key)
+    if q:
+        sql += " AND (key LIKE ? OR name LIKE ? OR tool LIKE ? OR query LIKE ?)"
+        like = f"%{q}%"; args += [like, like, like, like]
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(limit)
+    return jsonify(ok=True, logs=db_fetch(sql, tuple(args)))
+
+# ----------------------------- HTML PAGES ----------------------------
+LOGIN_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>VERNEX • OSINT API CONTROL</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SHAYAN_EXPLORER · Secure Login</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#05070d;--card:rgba(16,22,38,.72);--border:rgba(80,120,255,.18);
---accent:#3b82f6;--txt:#e6edf7;--mut:#8b9bb4;--ok:#10b981;--warn:#f59e0b;--bad:#ef4444}
+:root{--cyan:#00e5ff;--violet:#8b5cf6;--txt:#dceaff;--mut:#7b93b5;--red:#ff4d6d;--green:#22e08a}
+*{box-sizing:border-box}
 html,body{height:100%}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--txt);overflow-x:hidden;-webkit-font-smoothing:antialiased}
-body::before{content:'';position:fixed;inset:0;z-index:-2;background:
-radial-gradient(1000px 600px at 10% -10%,rgba(59,130,246,.18),transparent 60%),
-radial-gradient(900px 600px at 110% 10%,rgba(139,92,246,.16),transparent 60%),
-radial-gradient(800px 500px at 50% 120%,rgba(6,182,212,.12),transparent 60%),
-linear-gradient(180deg,#05070d,#070a12 40%,#05070d)}
-body::after{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.35;
-background-image:linear-gradient(rgba(80,120,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(80,120,255,.05) 1px,transparent 1px);
-background-size:44px 44px;mask-image:radial-gradient(ellipse at center,#000 30%,transparent 80%)}
-::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:linear-gradient(#3b82f6,#8b5cf6);border-radius:10px}
-#login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;perspective:1400px}
-.login-card{width:100%;max-width:440px;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:44px 34px;backdrop-filter:blur(24px);box-shadow:0 40px 100px rgba(0,0,0,.7),0 0 30px rgba(59,130,246,.35);animation:floatIn .9s cubic-bezier(.2,.8,.2,1);position:relative;overflow:hidden}
-.login-card::before{content:'';position:absolute;inset:-2px;border-radius:26px;padding:2px;background:linear-gradient(135deg,#3b82f6,#8b5cf6,#06b6d4,#3b82f6);background-size:300% 300%;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:borderMove 6s linear infinite;z-index:-1}
-@keyframes borderMove{0%{background-position:0% 50%}100%{background-position:300% 50%}}
-@keyframes floatIn{from{opacity:0;transform:translateY(40px) rotateX(12deg)}to{opacity:1;transform:none}}
-.logo-3d{width:82px;height:82px;margin:0 auto 18px;border-radius:22px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:38px;box-shadow:0 20px 50px rgba(59,130,246,.55),inset 0 -6px 20px rgba(0,0,0,.4);animation:spin3d 8s ease-in-out infinite}
-@keyframes spin3d{0%,100%{transform:rotateY(0) rotateX(0)}50%{transform:rotateY(180deg) rotateX(8deg)}}
-.login-card h1{text-align:center;font-size:24px;font-weight:900;letter-spacing:2px;background:linear-gradient(90deg,#60a5fa,#a78bfa,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
-.login-card p.sub{text-align:center;color:var(--mut);font-size:12px;margin-top:6px;letter-spacing:2px;text-transform:uppercase}
-.field{margin-top:18px}.field label{display:block;font-size:11px;font-weight:700;color:var(--mut);letter-spacing:1.5px;margin-bottom:7px;text-transform:uppercase}
-.field input{width:100%;padding:14px 16px;border-radius:12px;border:1px solid var(--border);background:rgba(5,10,20,.7);color:var(--txt);font-size:14px;outline:none;transition:.25s}
-.field input:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(59,130,246,.18),0 0 24px rgba(59,130,246,.25)}
-.btn{cursor:pointer;border:none;border-radius:12px;padding:14px 20px;font-weight:800;font-size:14px;letter-spacing:.5px;transition:.25s;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-family:'Inter',sans-serif}
-.btn-primary{background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;width:100%;margin-top:24px;box-shadow:0 14px 34px rgba(59,130,246,.45)}
-.btn-primary:hover{transform:translateY(-2px);box-shadow:0 20px 44px rgba(139,92,246,.6)}
-.btn-ghost{background:rgba(255,255,255,.05);color:var(--txt);border:1px solid var(--border)}
-.btn-ghost:hover{background:rgba(255,255,255,.1)}
-.btn-danger{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff}
-.btn-warn{background:linear-gradient(135deg,#f59e0b,#d97706);color:#111}
-.btn-ok{background:linear-gradient(135deg,#10b981,#059669);color:#fff}
-.btn-sm{padding:8px 12px;font-size:12px;border-radius:9px}
-.err{color:#fca5a5;font-size:12px;margin-top:14px;text-align:center;min-height:16px}
-#app{display:none;min-height:100vh}#app.on{display:block}
-.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:14px;padding:14px 20px;background:rgba(6,9,17,.82);backdrop-filter:blur(20px);border-bottom:1px solid var(--border)}
-.burger{width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;transition:.25s;flex-shrink:0}
-.burger:hover{background:rgba(59,130,246,.18);border-color:var(--accent)}
-.burger span{display:block;width:18px;height:2px;background:var(--txt);border-radius:2px;transition:.3s}
-.burger.x span:nth-child(1){transform:translateY(6px) rotate(45deg)}
-.burger.x span:nth-child(2){opacity:0}
-.burger.x span:nth-child(3){transform:translateY(-6px) rotate(-45deg)}
-.topbar .brand{font-weight:900;letter-spacing:2px;font-size:15px;background:linear-gradient(90deg,#60a5fa,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent}
-.topbar .spacer{flex:1}
-.pill{padding:6px 12px;border-radius:999px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35);color:#6ee7b7;font-size:11px;font-weight:700;letter-spacing:1px}
-.sidebar{position:fixed;top:0;left:0;height:100vh;width:270px;z-index:80;background:rgba(8,12,22,.96);backdrop-filter:blur(24px);border-right:1px solid var(--border);padding:20px 14px;overflow-y:auto;transform:translateX(-100%);transition:transform .35s cubic-bezier(.2,.8,.2,1);box-shadow:20px 0 60px rgba(0,0,0,.6)}
-.sidebar.open{transform:translateX(0)}
-.sb-brand{display:flex;align-items:center;gap:12px;padding:6px 8px 20px;border-bottom:1px solid var(--border);margin-bottom:16px}
-.sb-logo{width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 10px 26px rgba(59,130,246,.5)}
-.sb-brand h3{font-size:14px;font-weight:900;letter-spacing:2px;background:linear-gradient(90deg,#60a5fa,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent}
-.sb-brand small{display:block;color:var(--mut);font-size:10px;letter-spacing:1px;margin-top:2px}
-.nav-item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;cursor:pointer;color:var(--mut);font-size:13.5px;font-weight:600;transition:.22s;margin-bottom:3px;border:1px solid transparent}
-.nav-item:hover{background:rgba(59,130,246,.1);color:var(--txt);transform:translateX(3px)}
-.nav-item.active{background:linear-gradient(90deg,rgba(59,130,246,.24),rgba(139,92,246,.14));color:#fff;border-color:rgba(59,130,246,.4);box-shadow:0 8px 24px rgba(59,130,246,.22)}
-.nav-item .ic{font-size:17px;width:22px;text-align:center}
-.sb-foot{position:absolute;bottom:14px;left:14px;right:14px;color:var(--mut);font-size:10px;text-align:center;padding-top:14px;border-top:1px solid var(--border);letter-spacing:1px}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:70;opacity:0;pointer-events:none;transition:.3s}
-.overlay.on{opacity:1;pointer-events:auto}
-.main{padding:22px 20px 80px;max-width:1500px;margin:0 auto}
-.page{display:none;animation:fadeUp .4s ease}.page.on{display:block}
-@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-.page-head{margin-bottom:22px}.page-head h2{font-size:26px;font-weight:900;letter-spacing:-.5px}
-.page-head p{color:var(--mut);font-size:13px;margin-top:5px}
-.grid{display:grid;gap:16px}.g4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-.g3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}.g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
-.card{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:20px;backdrop-filter:blur(20px);box-shadow:0 20px 50px rgba(0,0,0,.45);position:relative;overflow:hidden;transition:.3s}
-.card:hover{border-color:rgba(59,130,246,.45);transform:translateY(-3px);box-shadow:0 28px 60px rgba(0,0,0,.55),0 0 40px rgba(59,130,246,.12)}
-.card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#3b82f6,#8b5cf6,transparent);opacity:.7}
-.stat-label{color:var(--mut);font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase}
-.stat-value{font-size:30px;font-weight:900;margin-top:8px;letter-spacing:-1px}
-.stat-sub{color:var(--mut);font-size:11px;margin-top:6px}
-.c-blue{color:#60a5fa}.c-purple{color:#a78bfa}.c-cyan{color:#22d3ee}.c-green{color:#34d399}.c-amber{color:#fbbf24}
-.tbl-wrap{overflow-x:auto;border-radius:16px;border:1px solid var(--border);background:rgba(8,12,22,.5)}
-table{width:100%;border-collapse:collapse;font-size:13px;min-width:760px}
-th{text-align:left;padding:14px;background:rgba(59,130,246,.08);color:#9db4d6;font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;font-weight:800;border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:13px 14px;border-bottom:1px solid rgba(80,120,255,.08);vertical-align:middle}
-tr:last-child td{border-bottom:none}tr:hover td{background:rgba(59,130,246,.05)}
-.mono{font-family:'JetBrains Mono',monospace;font-size:11.5px}
-.key-chip{background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#93c5fd;padding:5px 9px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:10.5px;cursor:pointer;transition:.2s;display:inline-block;word-break:break-all}
-.key-chip:hover{background:rgba(59,130,246,.25)}
-.badge{padding:4px 10px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;display:inline-block}
-.b-ok{background:rgba(16,185,129,.15);color:#6ee7b7;border:1px solid rgba(16,185,129,.4)}
-.b-bad{background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.4)}
-.b-warn{background:rgba(245,158,11,.15);color:#fcd34d;border:1px solid rgba(245,158,11,.4)}
-.b-info{background:rgba(59,130,246,.15);color:#93c5fd;border:1px solid rgba(59,130,246,.4)}
-.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
-.inp,select,textarea{width:100%;padding:12px 14px;border-radius:11px;border:1px solid var(--border);background:rgba(5,10,20,.75);color:var(--txt);font-size:13.5px;outline:none;transition:.22s;font-family:'Inter',sans-serif}
-.inp:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(59,130,246,.15)}
-label.lbl{display:block;font-size:11px;font-weight:800;color:var(--mut);letter-spacing:1.4px;text-transform:uppercase;margin-bottom:7px}
-.tools-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:6px}
-.tool-tile{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:12px;border:1px solid var(--border);background:rgba(5,10,20,.6);cursor:pointer;transition:.2s;user-select:none}
-.tool-tile:hover{border-color:var(--accent);background:rgba(59,130,246,.08)}
-.tool-tile.on{border-color:var(--accent);background:linear-gradient(135deg,rgba(59,130,246,.22),rgba(139,92,246,.12));box-shadow:0 0 20px rgba(59,130,246,.25)}
-.tool-tile .ic{font-size:17px}.tool-tile .nm{font-size:12px;font-weight:700}
-.tool-tile .ck{margin-left:auto;width:18px;height:18px;border-radius:6px;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:transparent;transition:.2s}
-.tool-tile.on .ck{background:var(--accent);border-color:var(--accent);color:#fff}
-.modal{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.75);backdrop-filter:blur(6px)}
-.modal.on{display:flex}
-.modal-box{width:100%;max-width:560px;max-height:90vh;overflow-y:auto;background:rgba(12,17,30,.98);border:1px solid var(--border);border-radius:22px;padding:26px;backdrop-filter:blur(24px);box-shadow:0 40px 100px rgba(0,0,0,.8),0 0 60px rgba(59,130,246,.2);animation:pop .3s cubic-bezier(.2,.9,.3,1.2)}
-@keyframes pop{from{opacity:0;transform:scale(.94) translateY(20px)}to{opacity:1;transform:none}}
-.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
-.modal-head h3{font-size:18px;font-weight:900;letter-spacing:-.3px}
-.x-btn{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--txt);cursor:pointer;font-size:16px;transition:.2s}
-.x-btn:hover{background:rgba(239,68,68,.2);border-color:#ef4444}
-#toasts{position:fixed;top:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:10px}
-.toast{padding:13px 18px;border-radius:12px;background:rgba(12,17,30,.97);border:1px solid var(--border);color:var(--txt);font-size:13px;font-weight:600;box-shadow:0 20px 50px rgba(0,0,0,.6);animation:slideIn .3s ease;min-width:240px;max-width:340px}
-.toast.ok{border-color:rgba(16,185,129,.5);box-shadow:0 0 30px rgba(16,185,129,.25)}
-.toast.err{border-color:rgba(239,68,68,.5);box-shadow:0 0 30px rgba(239,68,68,.25)}
-@keyframes slideIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.mt{margin-top:16px}.mt2{margin-top:24px}
-.muted{color:var(--mut);font-size:12px}
-.code-box{background:rgba(0,0,0,.5);border:1px solid var(--border);border-radius:12px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#93c5fd;word-break:break-all;line-height:1.7}
-.chart-wrap{position:relative;height:280px;margin-top:10px}
-.empty{text-align:center;padding:50px 20px;color:var(--mut)}.empty .ic{font-size:44px;opacity:.4;margin-bottom:12px}
-@media(max-width:640px){.main{padding:16px 13px 90px}.page-head h2{font-size:21px}.stat-value{font-size:24px}.login-card{padding:34px 22px}.topbar{padding:12px 13px}.topbar .brand{font-size:13px;letter-spacing:1px}}
+body{margin:0;display:flex;align-items:center;justify-content:center;padding:20px;
+  font-family:"Segoe UI",Inter,system-ui,-apple-system,sans-serif;color:var(--txt);
+  background:radial-gradient(900px 600px at 15% 0%,rgba(0,229,255,.16),transparent 60%),
+    radial-gradient(800px 600px at 90% 100%,rgba(139,92,246,.18),transparent 60%), #03060d;}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(0,229,255,.07) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(0,229,255,.07) 1px,transparent 1px);
+  background-size:54px 54px;
+  -webkit-mask-image:radial-gradient(circle at 50% 40%,#000 10%,transparent 75%);
+          mask-image:radial-gradient(circle at 50% 40%,#000 10%,transparent 75%);
+  animation:grid 20s linear infinite}
+@keyframes grid{to{background-position:54px 54px,54px 54px}}
+.wrap{position:relative;z-index:2;width:100%;max-width:420px;perspective:1200px}
+.card{background:linear-gradient(160deg,rgba(14,26,45,.94),rgba(5,10,20,.96));
+  border:1px solid rgba(0,229,255,.22);border-radius:22px;padding:34px 28px;
+  box-shadow:0 40px 90px -40px rgba(0,229,255,.6),0 0 0 1px rgba(255,255,255,.03) inset;
+  transform:rotateX(4deg);animation:float 6s ease-in-out infinite}
+@keyframes float{0%,100%{transform:rotateX(4deg) translateY(0)}50%{transform:rotateX(4deg) translateY(-8px)}}
+.logo{width:64px;height:64px;margin:0 auto 16px;border-radius:18px;display:grid;place-items:center;
+  font-weight:900;font-size:22px;letter-spacing:1px;color:#02121a;
+  background:linear-gradient(135deg,#00e5ff,#8b5cf6);
+  box-shadow:0 0 34px rgba(0,229,255,.65)}
+h1{font-size:20px;margin:0;text-align:center;letter-spacing:3px;font-weight:800}
+.sub{text-align:center;color:var(--mut);font-size:11px;letter-spacing:2.6px;margin:6px 0 26px}
+label{display:block;font-size:11px;letter-spacing:1.6px;color:var(--mut);margin:14px 0 6px;text-transform:uppercase}
+input{width:100%;padding:13px 14px;border-radius:12px;background:rgba(2,8,16,.85);
+  border:1px solid rgba(0,229,255,.2);color:var(--txt);font-size:14px;outline:none;transition:.2s}
+input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.15)}
+button{width:100%;margin-top:24px;padding:14px;border:0;border-radius:12px;cursor:pointer;
+  font-weight:800;letter-spacing:1.6px;font-size:13px;color:#02121a;
+  background:linear-gradient(135deg,#00e5ff,#3b82f6);box-shadow:0 16px 34px -16px rgba(0,229,255,.9);transition:.2s}
+button:hover{transform:translateY(-2px);box-shadow:0 22px 44px -18px rgba(0,229,255,1)}
+.err{background:rgba(255,77,109,.12);border:1px solid rgba(255,77,109,.4);color:#ffb3c1;
+  padding:10px 12px;border-radius:10px;font-size:12.5px;margin-bottom:8px;text-align:center}
+.foot{margin-top:22px;text-align:center;font-size:10.5px;letter-spacing:1.6px;color:var(--mut)}
+.foot b{color:var(--cyan)}
+
+#hacker-overlay {
+  display: none; position: fixed; inset: 0; background: #000; color: #0f0; 
+  font-family: 'Courier New', monospace; z-index: 9999; padding: 40px; 
+  font-size: 16px; text-shadow: 0 0 5px #0f0; overflow: hidden;
+}
+#hacker-text { line-height: 1.6; }
+#hacker-text div { margin-bottom: 5px; }
+.blink { animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.scanline {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,255,0,0.1) 50%, rgba(0,255,0,0.1));
+  background-size: 100% 4px; pointer-events: none; opacity: 0.3;
+}
 </style>
 </head>
 <body>
-
-<div id="login">
-  <div class="login-card">
-    <div class="logo-3d">🛰️</div>
-    <h1>VERNEX CONTROL</h1>
-    <p class="sub">OSINT API MANAGEMENT</p>
-    <div class="field"><label>Username</label><input id="luser" type="text" placeholder="vernex"></div>
-    <div class="field"><label>Password</label><input id="lpass" type="password" placeholder="••••••••"></div>
-    <button class="btn btn-primary" onclick="doLogin()">⚡ ACCESS CONTROL CENTER</button>
-    <div class="err" id="lerr"></div>
-    <div style="text-align:center;margin-top:18px;color:var(--mut);font-size:10px;letter-spacing:1.5px">DEVELOPER • SHAYAN_EXPLORER</div>
-  </div>
+<div id="hacker-overlay">
+  <div class="scanline"></div>
+  <div id="hacker-text"></div>
 </div>
 
-<div id="app">
-  <div class="sidebar" id="sidebar">
-    <div class="sb-brand"><div class="sb-logo">🛰️</div><div><h3>VERNEX</h3><small>CONTROL CENTER</small></div></div>
-    <div class="nav-item active" data-page="dashboard"><span class="ic">📊</span> Dashboard</div>
-    <div class="nav-item" data-page="keys"><span class="ic">🗝️</span> API Keys</div>
-    <div class="nav-item" data-page="generate"><span class="ic">➕</span> Generate Key</div>
-    <div class="nav-item" data-page="logs"><span class="ic">📜</span> Request Logs</div>
-    <div class="nav-item" data-page="tools"><span class="ic">🧰</span> Tools &amp; Endpoints</div>
-    <div class="nav-item" data-page="users"><span class="ic">👥</span> Customers</div>
-    <div class="nav-item" data-page="bot"><span class="ic">🤖</span> Telegram Bot</div>
-    <div class="nav-item" data-page="settings"><span class="ic">⚙️</span> Settings</div>
-    <div class="nav-item" onclick="doLogout()" style="color:#fca5a5"><span class="ic">🚪</span> Logout</div>
-    <div class="sb-foot">v2.1 • SHAYAN_EXPLORER</div>
-  </div>
-  <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
-  <div class="topbar">
-    <div class="burger" id="burger" onclick="toggleSidebar()"><span></span><span></span><span></span></div>
-    <div class="brand">VERNEX • OSINT API</div>
-    <div class="spacer"></div><div class="pill">● ONLINE</div>
-  </div>
-  <div class="main">
-    <div class="page on" id="page-dashboard">
-      <div class="page-head"><h2>Dashboard</h2><p>Real-time overview of your API infrastructure</p></div>
-      <div class="grid g4">
-        <div class="card"><div class="stat-label">Total Revenue</div><div class="stat-value c-green" id="s-rev">₹0</div><div class="stat-sub" id="s-rev-sub">All time</div></div>
-        <div class="card"><div class="stat-label">Today Revenue</div><div class="stat-value c-amber" id="s-today">₹0</div><div class="stat-sub">Since 00:00 UTC</div></div>
-        <div class="card"><div class="stat-label">Total Keys</div><div class="stat-value c-blue" id="s-keys">0</div><div class="stat-sub" id="s-active">0 active</div></div>
-        <div class="card"><div class="stat-label">Total Requests</div><div class="stat-value c-purple" id="s-req">0</div><div class="stat-sub">Across all keys</div></div>
-      </div>
-      <div class="grid g4 mt">
-        <div class="card"><div class="stat-label">Last 7 Days</div><div class="stat-value c-cyan" id="s-7">₹0</div></div>
-        <div class="card"><div class="stat-label">Last 30 Days</div><div class="stat-value c-cyan" id="s-30">₹0</div></div>
-        <div class="card"><div class="stat-label">Last 365 Days</div><div class="stat-value c-cyan" id="s-365">₹0</div></div>
-        <div class="card"><div class="stat-label">Active Keys</div><div class="stat-value c-green" id="s-ak">0</div></div>
-      </div>
-      <div class="card mt2"><div class="stat-label">Revenue • Last 14 Days</div><div class="chart-wrap"><canvas id="revChart"></canvas></div></div>
-      <div class="card mt2"><div class="stat-label">Top Tools Used</div><div id="top-tools" class="mt"></div></div>
-    </div>
-    <div class="page" id="page-keys">
-      <div class="page-head"><h2>API Keys</h2><p>Manage, edit, suspend and track all your API keys</p></div>
-      <div class="card"><div class="tbl-wrap"><table>
-        <thead><tr><th>Name</th><th>Key</th><th>Tools</th><th>Usage</th><th>Devices</th><th>Expiry</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody id="keys-body"></tbody>
-      </table></div></div>
-    </div>
-    <div class="page" id="page-generate">
-      <div class="page-head"><h2>Generate API Key</h2><p>Create a new key with custom permissions, expiry, limits and price</p></div>
-      <div class="card">
-        <div class="form-grid">
-          <div><label class="lbl">Key Name *</label><input class="inp" id="g-name" placeholder="e.g. Rahul Premium"></div>
-          <div><label class="lbl">Custom Key (optional)</label><div class="row"><input class="inp" id="g-key" placeholder="Leave empty for random"><button class="btn btn-ghost btn-sm" onclick="randomKey()">🎲</button></div></div>
-          <div><label class="lbl">Price (₹)</label><input class="inp" id="g-price" type="number" value="0" min="0" step="0.01"></div>
-          <div><label class="lbl">Request Limit (0 = unlimited)</label><input class="inp" id="g-limit" type="number" value="1000" min="0"></div>
-          <div><label class="lbl">Device Limit</label><input class="inp" id="g-devices" type="number" value="1" min="1"></div>
-          <div><label class="lbl">Expiry Mode</label>
-            <select id="g-expmode" class="inp" onchange="expMode()">
-              <option value="never">Never Expires</option>
-              <option value="preset" selected>Preset Duration</option>
-              <option value="custom">Custom Date/Time</option>
-            </select>
-          </div>
-          <div id="g-preset-wrap"><label class="lbl">Duration</label>
-            <select id="g-preset" class="inp">
-              <option value="1h">1 Hour</option><option value="6h">6 Hours</option><option value="12h">12 Hours</option>
-              <option value="1d" selected>1 Day</option><option value="7d">7 Days</option><option value="30d">30 Days</option>
-              <option value="90d">90 Days</option><option value="365d">365 Days</option>
-            </select>
-          </div>
-          <div id="g-custom-wrap" style="display:none"><label class="lbl">Expiry Date &amp; Time</label><input class="inp" id="g-datetime" type="datetime-local"></div>
-        </div>
-        <div class="mt2">
-          <div class="row" style="justify-content:space-between">
-            <label class="lbl" style="margin:0">Allowed Tools</label>
-            <button class="btn btn-ghost btn-sm" onclick="toggleAllTools()" id="selAllBtn">✅ Select All</button>
-          </div>
-          <div class="tools-grid" id="tools-grid"></div>
-        </div>
-        <div class="mt2 row">
-          <button class="btn btn-primary" style="width:auto;margin:0;padding:14px 34px" onclick="createKey()">🚀 GENERATE KEY</button>
-          <button class="btn btn-ghost" onclick="resetForm()">↺ Reset</button>
-        </div>
-      </div>
-    </div>
-    <div class="page" id="page-logs">
-      <div class="page-head"><h2>Request Logs</h2><p>Every API request made with your keys</p></div>
-      <div class="card">
-        <div class="row" style="margin-bottom:14px">
-          <input class="inp" id="log-filter" placeholder="Filter by key value..." style="max-width:320px">
-          <button class="btn btn-ghost btn-sm" onclick="loadLogs()">🔍 Search</button>
-          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('log-filter').value='';loadLogs()">Clear</button>
-        </div>
-        <div class="tbl-wrap"><table>
-          <thead><tr><th>Time</th><th>Key Name</th><th>Key</th><th>Tool</th><th>Input</th><th>IP</th><th>Status</th></tr></thead>
-          <tbody id="logs-body"></tbody>
-        </table></div>
-      </div>
-    </div>
-    <div class="page" id="page-tools">
-      <div class="page-head"><h2>Tools &amp; Endpoints</h2><p>All available endpoints — call them with your API key</p></div>
-      <div class="card"><div class="muted">Base URL: <span class="mono" id="base-url"></span> &nbsp;•&nbsp; Add <span class="mono">?key=YOUR_KEY&amp;&lt;param&gt;=VALUE</span></div></div>
-      <div class="grid g3 mt" id="tools-list"></div>
-    </div>
-    <div class="page" id="page-users">
-      <div class="page-head"><h2>Customers</h2><p>Customer logins created via Telegram bot or manually</p></div>
-      <div class="card"><div class="tbl-wrap"><table>
-        <thead><tr><th>Username</th><th>Device Limit</th><th>API Key</th><th>Active</th><th>Created</th><th></th></tr></thead>
-        <tbody id="users-body"></tbody>
-      </table></div></div>
-    </div>
-    <div class="page" id="page-bot">
-      <div class="page-head"><h2>Telegram Bot</h2><p>Control your API from Telegram — generate customer logins instantly</p></div>
-      <div class="grid g2">
-        <div class="card">
-          <div class="stat-label">Bot Configuration</div>
-          <div class="mt"><label class="lbl">Bot Token (from @BotFather)</label><input class="inp" id="bot-token" placeholder="123456:ABC-DEF..."></div>
-          <div class="mt"><label class="lbl">Bot Enabled</label>
-            <select class="inp" id="bot-enabled"><option value="0">Disabled</option><option value="1">Enabled</option></select>
-          </div>
-          <div class="mt"><label class="lbl">Admin Chat ID (auto-set on first /start)</label><input class="inp" id="bot-admin-chat" placeholder="Auto"></div>
-          <button class="btn btn-primary mt" onclick="saveBot()">💾 SAVE BOT SETTINGS</button>
-        </div>
-        <div class="card">
-          <div class="stat-label">Bot Commands</div>
-          <div class="code-box mt">
-/loginkey &lt;username&gt; &lt;password&gt; &lt;devices&gt;
-   → creates website login + API key
-/generate &lt;username&gt; &lt;password&gt; &lt;devices&gt;
-   → same as /loginkey
-/newkey &lt;name&gt; &lt;days&gt; &lt;limit&gt; &lt;price&gt;
-   → creates API key only
-/keys — list recent keys
-/stats — quick statistics
-          </div>
-          <div class="muted mt">⚡ First person to send <b>/start</b> becomes bot admin.</div>
-        </div>
-      </div>
-    </div>
-    <div class="page" id="page-settings">
-      <div class="page-head"><h2>Settings</h2><p>Configure upstream API key and system options</p></div>
-      <div class="card">
-        <div class="stat-label">Upstream API Key</div>
-        <div class="muted" style="margin:8px 0 12px">This is the master key used to call ft-osint-api.duckdns.org</div>
-        <input class="inp" id="set-upstream" placeholder="ftgamer2">
-        <button class="btn btn-primary mt" onclick="saveSettings()">💾 SAVE SETTINGS</button>
-      </div>
-      <div class="card mt2"><div class="stat-label">System Info</div><div class="mt mono muted" id="sys-info"></div></div>
-    </div>
+<div class="wrap">
+  <div class="card">
+    <div class="logo">SE</div>
+    <h1>SHAYAN_EXPLORER</h1>
+    <div class="sub">OSINT API · CONTROL CENTER</div>
+    __ERRBLOCK__
+    <form method="post" autocomplete="off" id="loginForm" onsubmit="startHacking(event)">
+      <label>Username</label>
+      <input name="username" id="uName" placeholder="Enter username" required autofocus>
+      <label>Password</label>
+      <input name="password" id="pWord" type="password" placeholder="Enter password" required>
+      <button type="submit">AUTHENTICATE</button>
+    </form>
+    <div class="foot">API DEVELOPER · <b>SHAYAN_EXPLORER</b></div>
   </div>
 </div>
-
-<div class="modal" id="editModal">
-  <div class="modal-box">
-    <div class="modal-head"><h3>✏️ Edit Key</h3><button class="x-btn" onclick="closeEdit()">✕</button></div>
-    <input type="hidden" id="e-id">
-    <div class="form-grid">
-      <div><label class="lbl">Name</label><input class="inp" id="e-name"></div>
-      <div><label class="lbl">Price (₹)</label><input class="inp" id="e-price" type="number" step="0.01"></div>
-      <div><label class="lbl">Request Limit</label><input class="inp" id="e-limit" type="number"></div>
-      <div><label class="lbl">Device Limit</label><input class="inp" id="e-devices" type="number" min="1"></div>
-      <div><label class="lbl">Expiry (datetime)</label><input class="inp" id="e-exp" type="datetime-local"></div>
-    </div>
-    <div class="mt">
-      <div class="row" style="justify-content:space-between">
-        <label class="lbl" style="margin:0">Allowed Tools</label>
-        <button class="btn btn-ghost btn-sm" onclick="toggleAllEditTools()" id="eSelAll">✅ Select All</button>
-      </div>
-      <div class="tools-grid" id="edit-tools-grid"></div>
-    </div>
-    <div class="mt row">
-      <button class="btn btn-primary" style="width:auto;margin:0;padding:12px 28px" onclick="saveEdit()">💾 SAVE CHANGES</button>
-      <button class="btn btn-ghost" onclick="closeEdit()">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<div id="toasts"></div>
 
 <script>
-let ALL_TOOLS = {};
-let SELECTED = new Set();
-let EDIT_SELECTED = new Set();
-let revChartObj = null;
-let CURRENT_KEYS = [];
+function startHacking(e) {
+  e.preventDefault();
+  const overlay = document.getElementById('hacker-overlay');
+  const textDiv = document.getElementById('hacker-text');
+  overlay.style.display = 'block';
+  
+  const lines = [
+    "> [SYSTEM] Initializing SHAYAN_EXPLORER OSINT Engine...",
+    "> [AUTH] Checking credentials...",
+    "> [NET] Bypassing firewall protocols...",
+    "> [SEC] Injecting payload...",
+    "> [DB] Connecting to secure database...",
+    "> [SYSTEM] Access Granted. Loading Dashboard..."
+  ];
+  
+  let i = 0;
+  const interval = setInterval(() => {
+    if (i < lines.length) {
+      const p = document.createElement('div');
+      p.textContent = lines[i];
+      if (i === lines.length - 1) p.innerHTML += ' <span class="blink">_</span>';
+      textDiv.appendChild(p);
+      i++;
+    } else {
+      clearInterval(interval);
+      setTimeout(() => { document.getElementById('loginForm').submit(); }, 500);
+    }
+  }, 400);
+}
+</script>
+</body>
+</html>"""
+LOGIN_HTML = LOGIN_HTML.replace("__ERRBLOCK__", '<div class="err">__ERR__</div>')
 
-function $(id){ return document.getElementById(id); }
-function toast(msg, type){
-  const t = document.createElement('div');
-  t.className = 'toast ' + (type || '');
-  t.textContent = msg;
-  $('toasts').appendChild(t);
-  setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(40px)'; setTimeout(()=>t.remove(),300); }, 3200);
+DASH_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
+<title>SHAYAN_EXPLORER · OSINT API CONTROL</title>
+<style>
+:root{
+  --bg:#03060d;--panel:rgba(10,18,32,.82);--panel2:rgba(13,24,42,.7);
+  --line:rgba(0,229,255,.16);--cyan:#00e5ff;--blue:#3b82f6;--violet:#8b5cf6;
+  --green:#22e08a;--red:#ff4d6d;--amber:#ffb020;--txt:#dceaff;--mut:#7b93b5;--r:16px;
 }
-function fmtMoney(n){ return '₹' + Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2}); }
-function fmtDate(s){ if(!s) return '—'; try{ return new Date(s).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}); }catch(e){ return s; } }
-function copyText(t){ navigator.clipboard.writeText(t).then(()=>toast('Copied!','ok')); }
-async function api(url, opts){
-  const r = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
-  let j = {};
-  try{ j = await r.json(); }catch(e){}
-  if(!r.ok && !j.error){ j.error = 'HTTP ' + r.status; }
-  return j;
-}
-function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:"Segoe UI",Inter,system-ui,-apple-system,sans-serif;
+  color:var(--txt);background:var(--bg);overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(1100px 650px at 10% -10%,rgba(0,229,255,.13),transparent 60%),
+    radial-gradient(900px 600px at 100% 0%,rgba(139,92,246,.14),transparent 55%),
+    radial-gradient(900px 700px at 50% 120%,rgba(59,130,246,.12),transparent 60%);}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(0,229,255,.045) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(0,229,255,.045) 1px,transparent 1px);
+  background-size:58px 58px;animation:grid 24s linear infinite;
+  -webkit-mask-image:radial-gradient(circle at 50% 30%,#000 15%,transparent 80%);
+          mask-image:radial-gradient(circle at 50% 30%,#000 15%,transparent 80%)}
+@keyframes grid{to{background-position:58px 58px,58px 58px}}
 
-async function doLogin(){
-  const u = $('luser').value.trim();
-  const p = $('lpass').value;
-  $('lerr').textContent = '';
-  const r = await api('/api/admin/login', {method:'POST', body:JSON.stringify({username:u,password:p})});
-  if(r.ok){ showApp(); } else { $('lerr').textContent = r.error || 'Login failed'; }
-}
-async function doLogout(){ await api('/api/admin/logout', {method:'POST'}); location.reload(); }
-$('lpass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+.app{position:relative;z-index:2;display:flex;min-height:100vh}
+.sidebar{width:250px;flex:0 0 250px;padding:20px 14px;display:flex;flex-direction:column;gap:8px;
+  background:linear-gradient(180deg,rgba(8,16,30,.95),rgba(4,9,18,.92));
+  border-right:1px solid var(--line);position:sticky;top:0;height:100vh;overflow-y:auto;
+  transition:transform .28s ease;z-index:60}
+.side-head{display:flex;gap:12px;align-items:center;padding:6px 6px 18px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.logo{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-weight:900;font-size:15px;
+  color:#02121a;background:linear-gradient(135deg,#00e5ff,#8b5cf6);box-shadow:0 0 26px rgba(0,229,255,.6);flex:0 0 44px}
+.side-title{font-size:12.5px;font-weight:800;letter-spacing:1.6px}
+.side-sub{font-size:9px;letter-spacing:2px;color:var(--mut);margin-top:3px}
+.nav-item{display:flex;align-items:center;gap:11px;width:100%;padding:12px 13px;border-radius:12px;
+  background:transparent;border:1px solid transparent;color:var(--mut);font-size:13px;font-weight:600;
+  cursor:pointer;text-align:left;transition:.18s;letter-spacing:.3px;font-family:inherit}
+.nav-item span{width:20px;text-align:center;font-size:14px;opacity:.9}
+.nav-item:hover{background:rgba(0,229,255,.07);color:var(--txt);border-color:rgba(0,229,255,.14)}
+.nav-item.active{background:linear-gradient(90deg,rgba(0,229,255,.18),rgba(0,229,255,.02));
+  color:#fff;border-color:rgba(0,229,255,.35);box-shadow:0 0 24px -10px rgba(0,229,255,.9)}
+.side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.dev{font-size:9.5px;letter-spacing:1.6px;color:var(--mut);text-align:center}
+.dev b{color:var(--cyan);font-size:11px;letter-spacing:1.4px}
 
-async function showApp(){
-  $('login').style.display = 'none';
-  $('app').classList.add('on');
-  await loadTools();
-  await loadDashboard();
-  await loadKeys();
-  await loadLogs();
-  await loadUsers();
-  await loadSettings();
-  $('base-url').textContent = location.origin + '/api/{tool}?key=YOUR_KEY';
-}
-(async function(){ const r = await api('/api/admin/check'); if(r.admin){ showApp(); } })();
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 20px;position:sticky;top:0;z-index:50;
+  background:rgba(4,9,18,.82);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.icon-btn{width:40px;height:40px;border-radius:11px;border:1px solid var(--line);background:rgba(0,229,255,.07);
+  color:var(--cyan);font-size:17px;cursor:pointer;display:none;place-items:center;transition:.18s}
+.icon-btn:hover{background:rgba(0,229,255,.18)}
+.top-brand{font-size:13px;font-weight:800;letter-spacing:2px}
+.top-brand small{display:block;font-size:9px;letter-spacing:2.4px;color:var(--mut);font-weight:600;margin-top:2px}
+.top-spacer{flex:1}
+.chip{font-size:10px;letter-spacing:1.4px;padding:7px 12px;border-radius:999px;
+  border:1px solid rgba(34,224,138,.4);color:var(--green);background:rgba(34,224,138,.09)}
+.content{padding:22px;flex:1}
+.view{display:none;animation:fade .35s ease}
+.view.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
-function toggleSidebar(){
-  $('sidebar').classList.toggle('open');
-  $('overlay').classList.toggle('on');
-  $('burger').classList.toggle('x');
+.grid{display:grid;gap:16px}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{background:linear-gradient(160deg,rgba(13,24,42,.9),rgba(6,12,24,.88));
+  border:1px solid var(--line);border-radius:var(--r);padding:18px;position:relative;
+  box-shadow:0 20px 44px -28px rgba(0,229,255,.55),inset 0 1px 0 rgba(255,255,255,.05);
+  transition:transform .3s,box-shadow .3s;transform-style:preserve-3d}
+.card:hover{transform:translateY(-4px) rotateX(1.5deg);box-shadow:0 30px 60px -26px rgba(0,229,255,.75)}
+.card h3{margin:0 0 4px;font-size:11px;letter-spacing:2px;color:var(--mut);font-weight:700;text-transform:uppercase}
+.card .big{font-size:29px;font-weight:800;letter-spacing:-.5px;
+  background:linear-gradient(135deg,#fff,#7fe9ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.card .sub{font-size:11px;color:var(--mut);margin-top:6px}
+.card.glow::after{content:"";position:absolute;inset:auto 12px 0 12px;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.7}
+
+.panel{background:linear-gradient(160deg,rgba(11,20,36,.92),rgba(5,10,20,.9));
+  border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-top:18px;
+  box-shadow:0 20px 50px -34px rgba(0,229,255,.6)}
+.panel-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.panel-head h2{margin:0;font-size:13px;letter-spacing:2.2px;font-weight:800;color:#eaf6ff}
+.panel-head .spacer{flex:1}
+
+.btn{padding:10px 16px;border-radius:11px;border:1px solid rgba(0,229,255,.35);
+  background:linear-gradient(135deg,rgba(0,229,255,.2),rgba(59,130,246,.16));
+  color:#eaffff;font-size:12px;font-weight:700;letter-spacing:1.1px;cursor:pointer;transition:.18s;font-family:inherit}
+.btn:hover{transform:translateY(-2px);box-shadow:0 14px 30px -14px rgba(0,229,255,.9)}
+.btn.ghost{background:transparent;border-color:var(--line);color:var(--mut)}
+.btn.ghost:hover{color:#fff;border-color:rgba(0,229,255,.5)}
+.btn.red{border-color:rgba(255,77,109,.45);background:rgba(255,77,109,.12);color:#ffb3c1}
+.btn.green{border-color:rgba(34,224,138,.45);background:rgba(34,224,138,.12);color:#9ff5cd}
+.btn.amber{border-color:rgba(255,176,32,.45);background:rgba(255,176,32,.12);color:#ffd894}
+.btn.sm{padding:7px 11px;font-size:10.5px;letter-spacing:.8px;border-radius:9px}
+input,select,textarea{width:100%;padding:11px 13px;border-radius:11px;background:rgba(2,8,16,.9);
+  border:1px solid rgba(0,229,255,.18);color:var(--txt);font-size:13px;outline:none;font-family:inherit;transition:.18s}
+input:focus,select:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.13)}
+.search{max-width:280px}
+label.fl{display:block;font-size:10px;letter-spacing:1.6px;color:var(--mut);margin:14px 0 6px;text-transform:uppercase;font-weight:700}
+
+.tbl-wrap{overflow-x:auto;border-radius:12px;border:1px solid rgba(0,229,255,.1)}
+table{width:100%;border-collapse:collapse;font-size:12.3px;min-width:760px}
+th{text-align:left;padding:11px 12px;font-size:9.6px;letter-spacing:1.7px;color:var(--mut);
+  text-transform:uppercase;background:rgba(0,229,255,.05);border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 12px;border-bottom:1px solid rgba(0,229,255,.07);vertical-align:middle}
+tr:hover td{background:rgba(0,229,255,.04)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.4px;color:#9de8ff;word-break:break-all}
+.badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:9.6px;letter-spacing:1.1px;font-weight:800}
+.b-active{background:rgba(34,224,138,.14);color:var(--green);border:1px solid rgba(34,224,138,.35)}
+.b-susp{background:rgba(255,176,32,.13);color:var(--amber);border:1px solid rgba(255,176,32,.35)}
+.b-exp{background:rgba(255,77,109,.13);color:var(--red);border:1px solid rgba(255,77,109,.35)}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+
+.modal{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;padding:18px;
+  background:rgba(2,6,14,.82);backdrop-filter:blur(7px)}
+.modal.show{display:flex}
+.modal-box{width:100%;max-width:640px;max-height:90vh;overflow-y:auto;border-radius:20px;padding:24px;
+  background:linear-gradient(160deg,rgba(13,24,42,.98),rgba(5,10,20,.99));
+  border:1px solid rgba(0,229,255,.3);box-shadow:0 50px 110px -40px rgba(0,229,255,.85);
+  animation:pop .28s cubic-bezier(.2,1.2,.4,1)}
+@keyframes pop{from{opacity:0;transform:scale(.94) translateY(14px)}to{opacity:1;transform:none}}
+.modal-box h2{margin:0 0 4px;font-size:15px;letter-spacing:2px}
+.modal-box p.hint{margin:0 0 8px;font-size:11px;color:var(--mut)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.toolgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:8px;max-height:210px;
+  overflow-y:auto;padding:10px;border-radius:12px;background:rgba(2,8,16,.6);border:1px solid rgba(0,229,255,.12)}
+.tool-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;cursor:pointer;
+  font-size:11.4px;border:1px solid transparent;transition:.15s;color:var(--mut)}
+.tool-item:hover{background:rgba(0,229,255,.07);color:var(--txt)}
+.tool-item input{width:15px;height:15px;accent-color:#00e5ff;cursor:pointer;flex:0 0 15px}
+.quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+
+.chart{display:flex;align-items:flex-end;gap:7px;height:170px;padding:14px;border-radius:14px;
+  background:rgba(2,8,16,.6);border:1px solid rgba(0,229,255,.1)}
+.bar{flex:1;border-radius:6px 6px 3px 3px;min-height:4px;position:relative;
+  background:linear-gradient(180deg,#00e5ff,#3b82f6);box-shadow:0 0 18px -6px rgba(0,229,255,.9);transition:height .5s}
+.bar:hover{background:linear-gradient(180deg,#8b5cf6,#00e5ff)}
+.bar span{position:absolute;bottom:-19px;left:0;right:0;text-align:center;font-size:8.4px;color:var(--mut)}
+
+#toasts{position:fixed;top:16px;right:16px;z-index:999;display:flex;flex-direction:column;gap:9px;max-width:330px}
+.toast{padding:12px 16px;border-radius:12px;font-size:12.4px;font-weight:600;
+  background:rgba(9,18,32,.97);border:1px solid rgba(0,229,255,.35);color:#dff7ff;
+  box-shadow:0 20px 44px -20px rgba(0,229,255,.9);animation:slide .3s ease}
+.toast.err{border-color:rgba(255,77,109,.55);color:#ffc2cc}
+.toast.ok{border-color:rgba(34,224,138,.55);color:#a8f7d2}
+@keyframes slide{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+
+.empty{padding:26px;text-align:center;color:var(--mut);font-size:12px}
+.overlay{position:fixed;inset:0;background:rgba(2,6,14,.7);backdrop-filter:blur(3px);
+  z-index:55;display:none}
+.overlay.show{display:block}
+.doc-item{padding:13px 14px;border-radius:12px;background:rgba(2,8,16,.6);
+  border:1px solid rgba(0,229,255,.1);margin-bottom:9px}
+.doc-item .u{font-family:ui-monospace,Menlo,monospace;font-size:11.6px;color:#8ce8ff;word-break:break-all}
+.doc-item .d{font-size:10.4px;color:var(--mut);margin-top:4px;letter-spacing:.6px}
+
+@media(max-width:1100px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:860px){
+  .sidebar{position:fixed;left:0;top:0;height:100vh;transform:translateX(-105%);
+    box-shadow:0 0 70px rgba(0,229,255,.22)}
+  .sidebar.open{transform:translateX(0)}
+  .icon-btn{display:grid}
+  .content{padding:14px}
+  .g4,.g3,.g2{grid-template-columns:1fr}
+  .row2{grid-template-columns:1fr}
+  .panel{padding:14px}
+  .top-brand{font-size:11px;letter-spacing:1.4px}
+  .card .big{font-size:24px}
+  .search{max-width:100%;width:100%}
 }
-document.querySelectorAll('.nav-item[data-page]').forEach(el=>{
-  el.addEventListener('click', ()=>{
-    document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
-    el.classList.add('active');
-    document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
-    $('page-' + el.dataset.page).classList.add('on');
-    if(window.innerWidth < 900) toggleSidebar();
-    if(el.dataset.page === 'dashboard') loadDashboard();
-    if(el.dataset.page === 'keys') loadKeys();
-    if(el.dataset.page === 'logs') loadLogs();
-    if(el.dataset.page === 'users') loadUsers();
+</style>
+</head>
+<body>
+<div id="toasts"></div>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="side-head">
+      <div class="logo">SE</div>
+      <div>
+        <div class="side-title">SHAYAN_EXPLORER</div>
+        <div class="side-sub">OSINT API CONTROL</div>
+      </div>
+    </div>
+    <button class="nav-item active" data-view="overview"><span>◈</span> Overview</button>
+    <button class="nav-item" data-view="keys"><span>🔑</span> API Keys</button>
+    <button class="nav-item" data-view="logs"><span>▤</span> Request Logs</button>
+    <button class="nav-item" data-view="revenue"><span>₹</span> Revenue</button>
+    <button class="nav-item" data-view="docs"><span>❰❱</span> API Docs</button>
+    <div class="side-foot">
+      <div class="dev">API DEVELOPER<br><b>SHAYAN_EXPLORER</b></div>
+      <a class="btn ghost" href="/admin/logout" style="text-align:center;text-decoration:none">LOGOUT</a>
+    </div>
+  </aside>
+  <div class="overlay" id="overlay"></div>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="menuBtn" aria-label="menu">☰</button>
+      <div class="top-brand">CONTROL CENTER<small>SHAYAN_EXPLORER · OSINT API</small></div>
+      <div class="top-spacer"></div>
+      <div class="chip">● SYSTEM ONLINE</div>
+    </header>
+
+    <div class="content">
+      <section class="view active" id="view-overview">
+        <div class="grid g4">
+          <div class="card glow"><h3>Total Keys</h3><div class="big" id="s-keys">0</div><div class="sub" id="s-keys-sub">—</div></div>
+          <div class="card glow"><h3>Active Keys</h3><div class="big" id="s-active">0</div><div class="sub" id="s-active-sub">—</div></div>
+          <div class="card glow"><h3>Total Requests</h3><div class="big" id="s-req">0</div><div class="sub" id="s-req-sub">—</div></div>
+          <div class="card glow"><h3>Total Revenue</h3><div class="big" id="s-rev">₹0</div><div class="sub" id="s-rev-sub">—</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>REVENUE · LAST 14 DAYS</h2>
+            <div class="spacer"></div>
+            <button class="btn ghost sm" onclick="loadOverview()">REFRESH</button>
+          </div>
+          <div class="chart" id="revChart"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>QUICK ACTIONS</h2></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn" onclick="openKeyModal()">+ GENERATE KEY</button>
+            <button class="btn ghost" onclick="showView('keys')">MANAGE KEYS</button>
+            <button class="btn ghost" onclick="showView('logs')">VIEW LOGS</button>
+            <button class="btn ghost" onclick="showView('docs')">API DOCS</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-keys">
+        <div class="panel" style="margin-top:0">
+          <div class="panel-head">
+            <h2>API KEY HISTORY</h2>
+            <div class="spacer"></div>
+            <input class="search" id="keySearch" placeholder="Search key / name / tool..." oninput="loadKeys()">
+            <button class="btn" onclick="openKeyModal()">+ GENERATE KEY</button>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Key</th><th>Name</th><th>Tools</th><th>Expiry</th>
+                <th>Used / Limit</th><th>Price</th><th>Developer</th><th>Status</th><th>Actions</th>
+              </tr></thead>
+              <tbody id="keysBody"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-logs">
+        <div class="panel" style="margin-top:0">
+          <div class="panel-head">
+            <h2>REQUEST LOGS</h2>
+            <div class="spacer"></div>
+            <input class="search" id="logSearch" placeholder="Search key / tool / query..." oninput="loadLogs()">
+            <button class="btn ghost" onclick="loadLogs()">REFRESH</button>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>Time (UTC)</th><th>Key</th><th>Name</th><th>Tool</th><th>Query</th><th>IP</th><th>Status</th></tr></thead>
+              <tbody id="logsBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-revenue">
+        <div class="panel" style="margin-top:0">
+          <div class="panel-head">
+            <h2>REVENUE ANALYTICS</h2>
+            <div class="spacer"></div>
+            <select id="revRange" style="max-width:170px" onchange="loadRevenue()">
+              <option value="today">Today</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="30d" selected>Last 30 Days</option>
+              <option value="90d">Last 90 Days</option>
+              <option value="1y">Last 1 Year</option>
+              <option value="all">All Time</option>
+            </select>
+          </div>
+          <div class="grid g3">
+            <div class="card"><h3>Revenue (Range)</h3><div class="big" id="r-range">₹0</div><div class="sub">selected period</div></div>
+            <div class="card"><h3>Revenue (All Time)</h3><div class="big" id="r-total">₹0</div><div class="sub">lifetime earnings</div></div>
+            <div class="card"><h3>Keys Sold</h3><div class="big" id="r-count">0</div><div class="sub">total keys generated</div></div>
+          </div>
+          <div class="chart" id="revChart2" style="margin-top:16px"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-docs">
+        <div class="panel" style="margin-top:0">
+          <div class="panel-head"><h2>API ENDPOINTS</h2></div>
+          <p style="font-size:11.5px;color:var(--mut);margin:0 0 14px">
+            Base URL: <span class="mono" id="baseUrl"></span> · Pass your key as <b>key</b> query parameter.
+          </p>
+          <div id="docsList"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="keyModal">
+  <div class="modal-box">
+    <h2 id="modalTitle">GENERATE API KEY</h2>
+    <p class="hint" id="modalHint">Custom key or auto-generated · choose tools · set expiry & limit</p>
+
+    <label class="fl">API Key (custom or random)</label>
+    <div style="display:flex;gap:8px">
+      <input id="kKey" placeholder="Leave empty for auto key">
+      <button class="btn ghost" style="flex:0 0 auto" onclick="randomKey()">🎲 RANDOM</button>
+    </div>
+
+    <label class="fl">Key Name (for history)</label>
+    <input id="kName" placeholder="e.g. customer name / label">
+
+    <label class="fl">Developer Name / "By" (Optional)</label>
+    <input id="kByName" placeholder="e.g. SHAYAN_EXPLORER (Leave blank for default)">
+
+    <div class="row2">
+      <div>
+        <label class="fl">Request Limit (0 = unlimited)</label>
+        <input id="kLimit" type="number" min="0" value="0">
+      </div>
+      <div>
+        <label class="fl">Price (₹) — revenue</label>
+        <input id="kPrice" type="number" min="0" step="1" value="0">
+      </div>
+    </div>
+
+    <label class="fl">Expiry Date &amp; Time (required)</label>
+    <input id="kExpiry" type="datetime-local">
+    <div class="quick">
+      <button class="btn ghost sm" onclick="setExpiry(3600000)">+1 HOUR</button>
+      <button class="btn ghost sm" onclick="setExpiry(21600000)">+6 HOURS</button>
+      <button class="btn ghost sm" onclick="setExpiry(86400000)">+1 DAY</button>
+      <button class="btn ghost sm" onclick="setExpiry(604800000)">+7 DAYS</button>
+      <button class="btn ghost sm" onclick="setExpiry(2592000000)">+30 DAYS</button>
+    </div>
+
+    <label class="fl" style="display:flex;align-items:center;gap:10px">
+      <span>Allowed Tools</span>
+      <button class="btn ghost sm" type="button" onclick="toggleAllTools()" id="selAllBtn">SELECT ALL</button>
+    </label>
+    <div class="toolgrid" id="toolGrid"></div>
+
+    <label class="fl">Note</label>
+    <input id="kNote" placeholder="optional note">
+
+    <div style="display:flex;gap:10px;margin-top:22px">
+      <button class="btn" style="flex:1" id="saveKeyBtn" onclick="saveKey()">GENERATE KEY</button>
+      <button class="btn ghost" style="flex:0 0 auto" onclick="closeModal('keyModal')">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let TOOLS = [];
+let EDIT_ID = null;
+
+function toast(msg, type='ok'){
+  const d = document.createElement('div');
+  d.className = 'toast ' + type;
+  d.textContent = msg;
+  $('#toasts').appendChild(d);
+  setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateX(30px)'; d.style.transition='.3s'; }, 2600);
+  setTimeout(()=> d.remove(), 3000);
+}
+
+async function jget(url){
+  const r = await fetch(url, {credentials:'same-origin'});
+  if(r.status === 401){ location.href = '/admin/login'; return null; }
+  try { return await r.json(); } catch(e){ return {ok:false, error:'Bad response'}; }
+}
+async function jsend(url, method, body){
+  const r = await fetch(url, {
+    method, credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body || {})
   });
+  if(r.status === 401){ location.href = '/admin/login'; return null; }
+  try { return await r.json(); } catch(e){ return {ok:false, error:'Bad response'}; }
+}
+
+const sidebar = $('#sidebar'), overlay = $('#overlay');
+function openMenu(){ sidebar.classList.add('open'); overlay.classList.add('show'); }
+function closeMenu(){ sidebar.classList.remove('open'); overlay.classList.remove('show'); }
+$('#menuBtn').addEventListener('click', ()=>{
+  if(sidebar.classList.contains('open')) closeMenu(); else openMenu();
 });
+overlay.addEventListener('click', closeMenu);
+$$('.nav-item').forEach(b => b.addEventListener('click', ()=> showView(b.dataset.view)));
 
-async function loadTools(){
-  const r = await api('/api/admin/stats');
-  if(r.ok && r.tools){ ALL_TOOLS = r.tools; renderToolsGrid(); renderToolsList(); }
-}
-function renderToolsGrid(){
-  const grid = $('tools-grid'); grid.innerHTML = '';
-  Object.entries(ALL_TOOLS).forEach(([id,t])=>{
-    const d = document.createElement('div');
-    d.className = 'tool-tile'; d.dataset.id = id;
-    d.innerHTML = `<span class="ic">${t.icon}</span><span class="nm">${t.label}</span><span class="ck">✓</span>`;
-    d.onclick = ()=>{ if(SELECTED.has(id)){ SELECTED.delete(id); d.classList.remove('on'); } else { SELECTED.add(id); d.classList.add('on'); } };
-    grid.appendChild(d);
-  });
-}
-function renderToolsList(){
-  const wrap = $('tools-list'); wrap.innerHTML = '';
-  Object.entries(ALL_TOOLS).forEach(([id,t])=>{
-    const url = location.origin + '/api/' + id + '?key=YOUR_KEY&' + t.param + '=VALUE';
-    const d = document.createElement('div');
-    d.className = 'card';
-    d.innerHTML = `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:24px">${t.icon}</span>
-      <div><div style="font-weight:800">${t.label}</div><div class="muted mono" style="font-size:10.5px">/api/${id}</div></div></div>
-      <div class="code-box" style="margin-top:12px;font-size:10.5px">${url}</div>
-      <button class="btn btn-ghost btn-sm mt" onclick="copyText('${url}')">📋 Copy URL</button>`;
-    wrap.appendChild(d);
-  });
-}
-function toggleAllTools(){
-  const allOn = SELECTED.size === Object.keys(ALL_TOOLS).length;
-  SELECTED.clear();
-  document.querySelectorAll('#tools-grid .tool-tile').forEach(el=>{
-    if(allOn){ el.classList.remove('on'); } else { el.classList.add('on'); SELECTED.add(el.dataset.id); }
-  });
-  $('selAllBtn').textContent = allOn ? '✅ Select All' : '❌ Deselect All';
-}
-function toggleAllEditTools(){
-  const allOn = EDIT_SELECTED.size === Object.keys(ALL_TOOLS).length;
-  EDIT_SELECTED.clear();
-  document.querySelectorAll('#edit-tools-grid .tool-tile').forEach(el=>{
-    if(allOn){ el.classList.remove('on'); } else { el.classList.add('on'); EDIT_SELECTED.add(el.dataset.id); }
-  });
-  $('eSelAll').textContent = allOn ? '✅ Select All' : '❌ Deselect All';
+function showView(name){
+  $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-'+name));
+  $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === name));
+  closeMenu();
+  if(name === 'overview') loadOverview();
+  if(name === 'keys')     loadKeys();
+  if(name === 'logs')     loadLogs();
+  if(name === 'revenue')  loadRevenue();
+  if(name === 'docs')     renderDocs();
 }
 
-async function loadDashboard(){
-  const r = await api('/api/admin/stats');
-  if(!r.ok) return;
-  $('s-rev').textContent = fmtMoney(r.total_revenue);
-  $('s-today').textContent = fmtMoney(r.today_revenue);
-  $('s-keys').textContent = r.total_keys;
-  $('s-active').textContent = r.active_keys + ' active';
-  $('s-req').textContent = Number(r.total_requests).toLocaleString();
-  $('s-7').textContent = fmtMoney(r.revenue_7);
-  $('s-30').textContent = fmtMoney(r.revenue_30);
-  $('s-365').textContent = fmtMoney(r.revenue_365);
-  $('s-ak').textContent = r.active_keys;
-  const tt = $('top-tools');
-  if(!r.top_tools || !r.top_tools.length){ tt.innerHTML = '<div class="muted">No requests yet.</div>'; }
-  else {
-    const max = Math.max(...r.top_tools.map(x=>x.count));
-    tt.innerHTML = r.top_tools.map(x=>{
-      const t = ALL_TOOLS[x.tool] || {label:x.tool, icon:'🔧'};
-      const pct = Math.round((x.count/max)*100);
-      return `<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
-        <span>${t.icon} ${t.label}</span><span class="muted">${x.count}</span></div>
-        <div style="height:8px;border-radius:8px;background:rgba(255,255,255,.06);overflow:hidden">
-        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#3b82f6,#8b5cf6);border-radius:8px;transition:.5s"></div></div></div>`;
-    }).join('');
-  }
-  const ctx = $('revChart').getContext('2d');
-  if(revChartObj) revChartObj.destroy();
-  const grad = ctx.createLinearGradient(0,0,0,280);
-  grad.addColorStop(0,'rgba(59,130,246,.55)'); grad.addColorStop(1,'rgba(59,130,246,0)');
-  revChartObj = new Chart(ctx, {
-    type:'line',
-    data:{ labels:r.chart.map(x=>x.day), datasets:[{ label:'Revenue (₹)', data:r.chart.map(x=>x.value),
-      borderColor:'#60a5fa', backgroundColor:grad, borderWidth:2.5, fill:true, tension:.4,
-      pointBackgroundColor:'#8b5cf6', pointBorderColor:'#fff', pointRadius:4, pointHoverRadius:7 }]},
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
-      scales:{ x:{grid:{color:'rgba(80,120,255,.08)'},ticks:{color:'#8b9bb4',font:{size:10}}},
-              y:{grid:{color:'rgba(80,120,255,.08)'},ticks:{color:'#8b9bb4',font:{size:10}},beginAtZero:true}}}
-  });
+async function loadOverview(){
+  const d = await jget('/admin/api/stats?range=30d');
+  if(!d || !d.ok) return;
+  $('#s-keys').textContent   = d.total_keys;
+  $('#s-keys-sub').textContent = d.suspended_keys + ' suspended · ' + d.expired_keys + ' expired';
+  $('#s-active').textContent = d.active_keys;
+  $('#s-active-sub').textContent = 'currently usable';
+  $('#s-req').textContent    = d.total_requests;
+  $('#s-req-sub').textContent = d.today_requests + ' today';
+  $('#s-rev').textContent    = '₹' + d.revenue_total;
+  $('#s-rev-sub').textContent = '₹' + d.revenue_range + ' in last 30 days';
+  drawChart('#revChart', d.series);
+}
+
+function drawChart(sel, series){
+  const el = $(sel);
+  if(!el) return;
+  if(!series || !series.length){ el.innerHTML = '<div class="empty">No data</div>'; return; }
+  const max = Math.max(1, ...series.map(s => s.amount));
+  el.innerHTML = series.map(s => {
+    const h = Math.max(4, Math.round((s.amount / max) * 120));
+    const label = s.date.slice(5);
+    return '<div class="bar" style="height:'+h+'px" title="'+esc(s.date)+' · ₹'+s.amount+' · '+s.count+' keys"><span>'+esc(label)+'</span></div>';
+  }).join('');
 }
 
 async function loadKeys(){
-  const r = await api('/api/admin/keys');
-  if(!r.ok) return;
-  CURRENT_KEYS = r.keys;
-  const body = $('keys-body');
-  if(!r.keys.length){ body.innerHTML = '<tr><td colspan="9"><div class="empty"><div class="ic">🗝️</div>No API keys yet. Generate one!</div></td></tr>'; return; }
-  body.innerHTML = r.keys.map(k=>{
-    const tools = k.tools === 'all' ? '<span class="badge b-info">ALL TOOLS</span>' : `<span class="muted" style="font-size:11px">${k.tools.length} tools</span>`;
-    const usage = k.request_limit ? `${k.request_used}/${k.request_limit}` : `${k.request_used}/∞`;
-    const exp = k.expires_at ? (k.expired ? `<span class="badge b-bad">EXPIRED</span>` : fmtDate(k.expires_at)) : '<span class="badge b-ok">NEVER</span>';
-    const st = k.suspended ? '<span class="badge b-warn">SUSPENDED</span>' : '<span class="badge b-ok">ACTIVE</span>';
-    return `<tr>
-      <td><b>${esc(k.name)}</b></td>
-      <td><span class="key-chip" onclick="copyText('${k.key_value}')">${k.key_value}</span></td>
-      <td>${tools}</td><td class="mono">${usage}</td>
-      <td class="mono">${(k.devices||[]).length}/${k.device_limit}</td>
-      <td style="font-size:11px">${exp}</td>
-      <td class="mono c-green">${fmtMoney(k.price)}</td>
-      <td>${st}</td>
-      <td><div class="row" style="gap:5px">
-        <button class="btn btn-ghost btn-sm" onclick="openEdit(${k.id})">✏️</button>
-        <button class="btn btn-ghost btn-sm" onclick="restartKey(${k.id})" title="Reset request count">🔄</button>
-        <button class="btn ${k.suspended?'btn-ok':'btn-warn'} btn-sm" onclick="suspendKey(${k.id})">${k.suspended?'▶':'⏸'}</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteKey(${k.id})">🗑</button>
-      </div></td></tr>`;
+  const q = $('#keySearch').value.trim();
+  const d = await jget('/admin/api/keys?q=' + encodeURIComponent(q));
+  if(!d || !d.ok) return;
+  const tb = $('#keysBody');
+  if(!d.keys.length){
+    tb.innerHTML = '<tr><td colspan="9" class="empty">No keys yet. Click "+ GENERATE KEY".</td></tr>';
+    return;
+  }
+  tb.innerHTML = d.keys.map(k => {
+    let badge = '<span class="badge b-active">ACTIVE</span>';
+    if(k.expired) badge = '<span class="badge b-exp">EXPIRED</span>';
+    else if(k.status !== 'active') badge = '<span class="badge b-susp">SUSPENDED</span>';
+
+    const exp = k.expires_at ? new Date(k.expires_at).toLocaleString() : 'Never';
+    const lim = (k.req_limit > 0) ? (k.req_count + ' / ' + k.req_limit) : (k.req_count + ' / ∞');
+    const tools = k.tools === 'all' ? '<b style="color:#22e08a">ALL TOOLS</b>' : esc(k.tools.split(',').join(', '));
+    const byName = k.by_name ? esc(k.by_name) : '<span style="color:#7b93b5">Default</span>';
+
+    return '<tr>' +
+      '<td><span class="mono">'+esc(k.key)+'</span></td>' +
+      '<td>'+esc(k.name)+'</td>' +
+      '<td style="font-size:10.6px;max-width:190px">'+tools+'</td>' +
+      '<td style="font-size:10.6px">'+esc(exp)+'</td>' +
+      '<td style="font-size:11px">'+esc(lim)+'</td>' +
+      '<td>₹'+ (k.price||0) +'</td>' +
+      '<td>'+byName+'</td>' +
+      '<td>'+badge+'</td>' +
+      '<td><div class="acts">' +
+        '<button class="btn ghost sm" data-act="copy" data-key="'+esc(k.key)+'">COPY</button>' +
+        '<button class="btn ghost sm" data-act="edit" data-id="'+k.id+'">EDIT</button>' +
+        '<button class="btn amber sm" data-act="reset" data-id="'+k.id+'">RESTART</button>' +
+        '<button class="btn green sm" data-act="toggle" data-id="'+k.id+'" data-status="'+k.status+'">'+(k.status==='active'?'SUSPEND':'UNSUSPEND')+'</button>' +
+        '<button class="btn red sm" data-act="del" data-id="'+k.id+'">DELETE</button>' +
+      '</div></td>' +
+    '</tr>';
   }).join('');
 }
-async function restartKey(id){ if(!confirm('Reset request count to 0?')) return;
-  const r = await api('/api/admin/keys/'+id+'/restart', {method:'POST'});
-  if(r.ok){ toast('Request counter reset','ok'); loadKeys(); } else toast(r.error||'Failed','err'); }
-async function suspendKey(id){
-  const r = await api('/api/admin/keys/'+id+'/suspend', {method:'POST'});
-  if(r.ok){ toast(r.suspended?'Key suspended':'Key activated','ok'); loadKeys(); } else toast(r.error||'Failed','err'); }
-async function deleteKey(id){ if(!confirm('Permanently delete this key?')) return;
-  const r = await api('/api/admin/keys/'+id, {method:'DELETE'});
-  if(r.ok){ toast('Key deleted','ok'); loadKeys(); loadDashboard(); } else toast(r.error||'Failed','err'); }
+
+$('#keysBody').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if(!btn) return;
+  const act = btn.dataset.act;
+
+  if(act === 'copy'){
+    try { await navigator.clipboard.writeText(btn.dataset.key); toast('Key copied', 'ok'); }
+    catch(err){ toast('Copy failed', 'err'); }
+    return;
+  }
+  if(act === 'edit'){
+    const d = await jget('/admin/api/keys');
+    const k = d.keys.find(x => String(x.id) === btn.dataset.id);
+    if(k) openKeyModal(k);
+    return;
+  }
+  if(act === 'reset'){
+    if(!confirm('Reset request counter for this key?')) return;
+    const r = await jsend('/admin/api/keys/'+btn.dataset.id+'/reset', 'POST', {});
+    toast(r && r.ok ? 'Counter reset' : 'Failed', r && r.ok ? 'ok' : 'err');
+    loadKeys(); return;
+  }
+  if(act === 'toggle'){
+    const newStatus = btn.dataset.status === 'active' ? 'suspended' : 'active';
+    const r = await jsend('/admin/api/keys/'+btn.dataset.id, 'PATCH', {status:newStatus});
+    toast(r && r.ok ? 'Status updated' : 'Failed', r && r.ok ? 'ok' : 'err');
+    loadKeys(); return;
+  }
+  if(act === 'del'){
+    if(!confirm('Delete this key permanently?')) return;
+    const r = await jsend('/admin/api/keys/'+btn.dataset.id, 'DELETE', {});
+    toast(r && r.ok ? 'Key deleted' : 'Failed', r && r.ok ? 'ok' : 'err');
+    loadKeys(); return;
+  }
+});
+
+async function openKeyModal(k){
+  EDIT_ID = k ? k.id : null;
+  $('#modalTitle').textContent = k ? 'EDIT API KEY' : 'GENERATE API KEY';
+  $('#saveKeyBtn').textContent = k ? 'SAVE CHANGES' : 'GENERATE KEY';
+
+  $('#kKey').value    = k ? k.key : '';
+  $('#kKey').disabled = !!k;
+  $('#kName').value   = k ? (k.name || '') : '';
+  $('#kByName').value = k ? (k.by_name || '') : '';
+  $('#kLimit').value  = k ? (k.req_limit || 0) : 0;
+  $('#kPrice').value  = k ? (k.price || 0) : 0;
+  $('#kNote').value   = k ? (k.note || '') : '';
+
+  if(k && k.expires_ms) setExpiryAt(k.expires_ms);
+  else setExpiry(86400000);
+
+  await renderToolGrid(k ? (k.tools || 'all').split(',') : ['all']);
+  $('#keyModal').classList.add('show');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal(id){
+  $('#'+id).classList.remove('show');
+  document.body.style.overflow = '';
+}
+
+function setExpiryAt(ms){
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2,'0');
+  $('#kExpiry').value = d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+}
+function setExpiry(offsetMs){ setExpiryAt(Date.now() + offsetMs); }
 
 function randomKey(){
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let s = 'VX-';
-  for(let i=0;i<4;i++){ let part=''; for(let j=0;j<5;j++) part += chars[Math.floor(Math.random()*chars.length)];
-    s += part + (i<3?'-':''); }
-  $('g-key').value = s;
-}
-function expMode(){
-  const m = $('g-expmode').value;
-  $('g-preset-wrap').style.display = m==='preset' ? '' : 'none';
-  $('g-custom-wrap').style.display = m==='custom' ? '' : 'none';
-}
-function computeExpiry(){
-  const m = $('g-expmode').value;
-  if(m === 'never') return null;
-  if(m === 'custom'){ const v = $('g-datetime').value; if(!v) return null; return new Date(v).toISOString(); }
-  const dur = $('g-preset').value;
-  const map = {'1h':1/24,'6h':6/24,'12h':12/24,'1d':1,'7d':7,'30d':30,'90d':90,'365d':365};
-  return new Date(Date.now() + (map[dur]||1)*86400000).toISOString();
-}
-function resetForm(){
-  $('g-name').value = ''; $('g-key').value = ''; $('g-price').value = 0;
-  $('g-limit').value = 1000; $('g-devices').value = 1;
-  $('g-expmode').value = 'preset'; expMode();
-  SELECTED.clear();
-  document.querySelectorAll('#tools-grid .tool-tile').forEach(el=>el.classList.remove('on'));
-  $('selAllBtn').textContent = '✅ Select All';
-}
-async function createKey(){
-  const name = $('g-name').value.trim();
-  if(!name){ toast('Key name is required','err'); return; }
-  const tools = SELECTED.size === Object.keys(ALL_TOOLS).length ? 'all' : Array.from(SELECTED);
-  if(tools !== 'all' && tools.length === 0){ toast('Select at least one tool','err'); return; }
-  const payload = { name, key_value: $('g-key').value.trim(),
-    price: parseFloat($('g-price').value) || 0,
-    request_limit: parseInt($('g-limit').value) || 0,
-    device_limit: parseInt($('g-devices').value) || 1,
-    expires_at: computeExpiry(), tools };
-  const r = await api('/api/admin/keys', {method:'POST', body: JSON.stringify(payload)});
-  if(r.ok){
-    toast('Key generated: ' + r.key, 'ok');
-    resetForm();
-    document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
-    document.querySelector('.nav-item[data-page="keys"]').classList.add('active');
-    document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
-    $('page-keys').classList.add('on');
-    loadKeys(); loadDashboard();
-  } else toast(r.error || 'Failed to create key','err');
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = 'FT-';
+  for(let i=0;i<16;i++) out += chars[Math.floor(Math.random()*chars.length)];
+  $('#kKey').value = out;
 }
 
-function openEdit(id){
-  const k = CURRENT_KEYS.find(x=>x.id === id); if(!k) return;
-  $('e-id').value = k.id; $('e-name').value = k.name;
-  $('e-price').value = k.price; $('e-limit').value = k.request_limit;
-  $('e-devices').value = k.device_limit;
-  if(k.expires_at){ const d = new Date(k.expires_at); const pad = n => String(n).padStart(2,'0');
-    $('e-exp').value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
-  else { $('e-exp').value = ''; }
-  EDIT_SELECTED = new Set(k.tools === 'all' ? Object.keys(ALL_TOOLS) : k.tools);
-  const grid = $('edit-tools-grid'); grid.innerHTML = '';
-  Object.entries(ALL_TOOLS).forEach(([tid,t])=>{
-    const d = document.createElement('div');
-    d.className = 'tool-tile' + (EDIT_SELECTED.has(tid) ? ' on' : ''); d.dataset.id = tid;
-    d.innerHTML = `<span class="ic">${t.icon}</span><span class="nm">${t.label}</span><span class="ck">✓</span>`;
-    d.onclick = ()=>{ if(EDIT_SELECTED.has(tid)){ EDIT_SELECTED.delete(tid); d.classList.remove('on'); }
-      else { EDIT_SELECTED.add(tid); d.classList.add('on'); } };
-    grid.appendChild(d);
-  });
-  $('eSelAll').textContent = EDIT_SELECTED.size === Object.keys(ALL_TOOLS).length ? '❌ Deselect All' : '✅ Select All';
-  $('editModal').classList.add('on');
+async function renderToolGrid(selected){
+  if(!TOOLS.length){
+    const d = await jget('/admin/api/tools');
+    TOOLS = (d && d.tools) ? d.tools : [];
+  }
+  const sel = selected.map(s=>s.trim()).filter(Boolean);
+  const all = sel.includes('all');
+  $('#toolGrid').innerHTML = TOOLS.map(t =>
+    '<label class="tool-item"><input type="checkbox" class="toolChk" value="'+esc(t.id)+'"'+
+    ((all || sel.includes(t.id)) ? ' checked' : '')+'> '+esc(t.label)+'</label>'
+  ).join('');
+  updateSelAllBtn();
 }
-function closeEdit(){ $('editModal').classList.remove('on'); }
-async function saveEdit(){
-  const id = $('e-id').value;
-  const tools = EDIT_SELECTED.size === Object.keys(ALL_TOOLS).length ? 'all' : Array.from(EDIT_SELECTED);
-  const exp = $('e-exp').value ? new Date($('e-exp').value).toISOString() : null;
-  const payload = { name: $('e-name').value.trim(), price: parseFloat($('e-price').value) || 0,
-    request_limit: parseInt($('e-limit').value) || 0, device_limit: parseInt($('e-devices').value) || 1,
-    expires_at: exp, tools };
-  const r = await api('/api/admin/keys/'+id, {method:'PUT', body: JSON.stringify(payload)});
-  if(r.ok){ toast('Key updated','ok'); closeEdit(); loadKeys(); } else toast(r.error||'Failed','err');
+
+function toggleAllTools(){
+  const boxes = $$('.toolChk');
+  const allChecked = boxes.every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  updateSelAllBtn();
+}
+function updateSelAllBtn(){
+  const boxes = $$('.toolChk');
+  const allChecked = boxes.length && boxes.every(b => b.checked);
+  $('#selAllBtn').textContent = allChecked ? 'UNSELECT ALL' : 'SELECT ALL';
+}
+document.addEventListener('change', e => {
+  if(e.target.classList && e.target.classList.contains('toolChk')) updateSelAllBtn();
+});
+
+async function saveKey(){
+  const tools = $$('.toolChk').filter(b => b.checked).map(b => b.value);
+  if(!tools.length){ toast('Select at least one tool', 'err'); return; }
+
+  const expVal = $('#kExpiry').value;
+  if(!expVal){ toast('Expiry date & time is required', 'err'); return; }
+
+  const payload = {
+    name: $('#kName').value.trim(),
+    by_name: $('#kByName').value.trim(),
+    tools: tools,
+    expires_ms: new Date(expVal).getTime(),
+    req_limit: parseInt($('#kLimit').value || '0', 10) || 0,
+    price: parseFloat($('#kPrice').value || '0') || 0,
+    note: $('#kNote').value.trim()
+  };
+
+  let r;
+  if(EDIT_ID){
+    r = await jsend('/admin/api/keys/' + EDIT_ID, 'PATCH', payload);
+  } else {
+    payload.key = $('#kKey').value.trim();
+    r = await jsend('/admin/api/keys', 'POST', payload);
+  }
+
+  if(r && r.ok){
+    toast(EDIT_ID ? 'Key updated' : 'Key generated successfully', 'ok');
+    closeModal('keyModal');
+    EDIT_ID = null;
+    showView('keys');
+    loadKeys();
+    loadOverview();
+  } else {
+    toast((r && r.error) || 'Failed', 'err');
+  }
 }
 
 async function loadLogs(){
-  const f = $('log-filter').value.trim();
-  const r = await api('/api/admin/logs?limit=300' + (f ? '&key=' + encodeURIComponent(f) : ''));
-  if(!r.ok) return;
-  const body = $('logs-body');
-  if(!r.logs.length){ body.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="ic">📜</div>No logs yet</div></td></tr>'; return; }
-  body.innerHTML = r.logs.map(l=>{
-    const map = {ok:'b-ok', invalid_key:'b-bad', expired:'b-bad', suspended:'b-warn', limit_reached:'b-warn',
-      device_limit:'b-warn', tool_denied:'b-warn'};
-    const st = `<span class="badge ${map[l.status]||'b-info'}">${esc((l.status||'').toUpperCase())}</span>`;
-    return `<tr>
-      <td style="font-size:11px" class="mono">${fmtDate(l.ts)}</td>
-      <td>${esc(l.key_name)}</td>
-      <td><span class="mono" style="font-size:10.5px;color:#93c5fd">${(l.key_value||'').slice(0,18)}…</span></td>
-      <td><b>${esc(l.tool)}</b></td>
-      <td class="mono" style="font-size:11px">${esc((l.input||'').slice(0,32))}</td>
-      <td class="mono" style="font-size:10.5px">${esc(l.ip||'')}</td>
-      <td>${st}</td></tr>`;
+  const q = $('#logSearch').value.trim();
+  const d = await jget('/admin/api/logs?limit=300&q=' + encodeURIComponent(q));
+  if(!d || !d.ok) return;
+  const tb = $('#logsBody');
+  if(!d.logs.length){
+    tb.innerHTML = '<tr><td colspan="7" class="empty">No logs yet.</td></tr>';
+    return;
+  }
+  tb.innerHTML = d.logs.map(l =>
+    '<tr>' +
+      '<td style="font-size:10.6px;white-space:nowrap">'+esc((l.ts||'').replace('T',' ').replace('+00:00',''))+'</td>' +
+      '<td><span class="mono">'+esc(l.key)+'</span></td>' +
+      '<td>'+esc(l.name)+'</td>' +
+      '<td>'+esc(l.tool)+'</td>' +
+      '<td style="font-size:10.6px;max-width:230px;word-break:break-all">'+esc(l.query)+'</td>' +
+      '<td style="font-size:10.4px">'+esc(l.ip)+'</td>' +
+      '<td><span class="badge '+(l.status==='OK'?'b-active':'b-exp')+'">'+esc(l.status)+'</span></td>' +
+    '</tr>'
+  ).join('');
+}
+
+async function loadRevenue(){
+  const rng = $('#revRange').value;
+  const d = await jget('/admin/api/stats?range=' + rng);
+  if(!d || !d.ok) return;
+  $('#r-range').textContent = '₹' + d.revenue_range;
+  $('#r-total').textContent = '₹' + d.revenue_total;
+  $('#r-count').textContent = d.total_keys;
+  drawChart('#revChart2', d.series);
+}
+
+async function renderDocs(){
+  if(!TOOLS.length){
+    const d = await jget('/admin/api/tools');
+    TOOLS = (d && d.tools) ? d.tools : [];
+  }
+  $('#baseUrl').textContent = location.origin + '/api';
+  $('#docsList').innerHTML = TOOLS.map(t => {
+    const qs = ['key=YOUR_KEY'].concat(t.params.map(p => p + '=VALUE')).join('&');
+    return '<div class="doc-item">' +
+      '<div class="u">GET ' + esc(location.origin) + '/api/' + esc(t.id) + '?' + esc(qs) + '</div>' +
+      '<div class="d">' + esc(t.label) + ' · params: ' + esc(t.params.join(', ')) + '</div>' +
+    '</div>';
   }).join('');
 }
 
-async function loadUsers(){
-  const r = await api('/api/admin/users');
-  if(!r.ok) return;
-  const body = $('users-body');
-  if(!r.users.length){ body.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="ic">👥</div>No customers yet</div></td></tr>'; return; }
-  body.innerHTML = r.users.map(u=>`<tr>
-    <td><b>${esc(u.username)}</b></td>
-    <td class="mono">${u.device_limit}</td>
-    <td><span class="key-chip" onclick="copyText('${u.api_key||''}')">${(u.api_key||'—').slice(0,22)}…</span></td>
-    <td>${u.active ? '<span class="badge b-ok">ACTIVE</span>' : '<span class="badge b-bad">OFF</span>'}</td>
-    <td style="font-size:11px">${fmtDate(u.created_at)}</td>
-    <td><button class="btn btn-danger btn-sm" onclick="delUser(${u.id})">🗑</button></td></tr>`).join('');
-}
-async function delUser(id){ if(!confirm('Delete this customer?')) return;
-  const r = await api('/api/admin/users/'+id, {method:'DELETE'});
-  if(r.ok){ toast('Customer deleted','ok'); loadUsers(); } else toast(r.error||'Failed','err'); }
-
-async function loadSettings(){
-  const r = await api('/api/admin/settings');
-  if(!r.ok) return;
-  $('set-upstream').value = r.settings.upstream_key || '';
-  $('bot-token').value = r.settings.bot_token || '';
-  $('bot-enabled').value = r.settings.bot_enabled || '0';
-  $('bot-admin-chat').value = r.settings.bot_admin_chat || '';
-}
-async function saveSettings(){
-  const r = await api('/api/admin/settings', {method:'POST', body: JSON.stringify({upstream_key: $('set-upstream').value.trim()})});
-  if(r.ok) toast('Settings saved','ok'); else toast(r.error||'Failed','err');
-}
-async function saveBot(){
-  const r = await api('/api/admin/settings', {method:'POST', body: JSON.stringify({
-    bot_token: $('bot-token').value.trim(),
-    bot_enabled: $('bot-enabled').value,
-    bot_admin_chat: $('bot-admin-chat').value.trim()})});
-  if(r.ok) toast('Bot settings saved','ok'); else toast(r.error||'Failed','err');
-}
-
-expMode();
+(async function init(){
+  const d = await jget('/admin/api/tools');
+  TOOLS = (d && d.tools) ? d.tools : [];
+  loadOverview();
+  loadKeys();
+})();
 </script>
 </body>
 </html>"""
 
-# ---------------------------------------------------------------------
-# HTML ROUTE
-# ---------------------------------------------------------------------
-@app.route("/")
-def index():
-    return HTML
+# ----------------------------- BOOT ------------------------------
+init_db()
 
-# ---------------------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    print("=" * 62)
+    print("  SHAYAN_EXPLORER · OSINT API CONTROL CENTER")
+    print("  Developer: SHAYAN_EXPLORER")
+    print("  URL   : http://127.0.0.1:5000")
+    print(f"  Admin : {ADMIN_USER} / {ADMIN_PASS}")
+    print("=" * 62)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
