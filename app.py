@@ -23,7 +23,6 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # If DATABASE_URL exists (Vercel), use PostgreSQL. Otherwise, use local SQLite.
 DATABASE_URL = os.environ.get("DATABASE_URL")
-IS_VERCEL = os.environ.get("VERCEL") is not None
 
 ADMIN_USER = os.environ.get("ADMIN_USER", "vernex")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "vernex@16vx")
@@ -37,6 +36,8 @@ BRAND = os.environ.get("BRAND", "SHAYAN_EXPLORER")
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+# CRITICAL FOR VERCEL: Redirect Flask instance path to writable /tmp
+app.instance_path = '/tmp/instance' 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -79,7 +80,9 @@ TOOL_MAP = {t["id"]: t for t in TOOLS}
 # ----------------------------- DB CORE --------------------------------
 def db_connect():
     if DATABASE_URL:
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        # FIX: Remove channel_binding which crashes psycopg2 on Vercel
+        clean_url = DATABASE_URL.replace("?channel_binding=require", "").replace("&channel_binding=require", "")
+        conn = psycopg2.connect(clean_url, sslmode='require')
         conn.autocommit = True
         return conn
     else:
