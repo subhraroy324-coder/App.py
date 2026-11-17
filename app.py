@@ -2,11 +2,17 @@
 #  SHAYAN_EXPLORER · OSINT API CONTROL CENTER
 #  Developer: SHAYAN_EXPLORER
 # ============================================================
+#  LOCAL RUN:
+#     pip install -r requirements.txt
+#     python app.py
+#
+#  RAILWAY (persistent volume at /data):
+#     DB_PATH=/data/osint.db  (auto-detected if /data exists)
+# ============================================================
 
 import os
 import sqlite3
 import secrets
-import stat
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
@@ -17,23 +23,32 @@ import requests
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _resolve_db_path():
-    """Choose the DB path so data survives Render restarts."""
-    if os.environ.get("DB_PATH"):
-        return os.environ["DB_PATH"]
-    if os.environ.get("RENDER"):
-        return "/var/data/osint.db"
+    """Pick persistent DB path.
+    Priority: DB_PATH env → Railway /data → Vercel /tmp → local folder."""
+    env_path = os.environ.get("DB_PATH")
+    if env_path:
+        return env_path
+    if os.path.isdir("/data"):
+        return "/data/osint.db"
     if os.environ.get("VERCEL"):
         return "/tmp/osint.db"
     return os.path.join(APP_DIR, "osint.db")
 
 DB_PATH = _resolve_db_path()
+try:
+    _d = os.path.dirname(DB_PATH)
+    if _d:
+        os.makedirs(_d, exist_ok=True)
+except Exception:
+    pass
 
-ADMIN_USER = os.environ.get("ADMIN_USER", "vernex")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "vernex@16vx")
-SECRET_KEY = os.environ.get("SECRET_KEY", "shayan-explorer-super-secret-key")
+ADMIN_USER   = os.environ.get("ADMIN_USER", "vernex")
+ADMIN_PASS   = os.environ.get("ADMIN_PASS", "vernex@16vx")
+SECRET_KEY   = os.environ.get("SECRET_KEY", "shayan-explorer-super-secret-key")
 
 UPSTREAM_BASE = os.environ.get("UPSTREAM_BASE", "https://ft-osint-api.duckdns.org/api").rstrip("/")
-UPSTREAM_KEY = os.environ.get("UPSTREAM_KEY", "explorer16")
+UPSTREAM_KEY  = os.environ.get("UPSTREAM_KEY", "explorer16")
+
 BRAND = os.environ.get("BRAND", "SHAYAN_EXPLORER")
 
 app = Flask(__name__)
@@ -77,25 +92,10 @@ TOOLS = [
 ]
 TOOL_MAP = {t["id"]: t for t in TOOLS}
 
-# ----------------------------- DB HELPERS --------------------------------
-def _ensure_db_dir():
-    """Forces the creation of the directory and sets permissions for Render."""
-    parent = os.path.dirname(DB_PATH)
-    if parent and not os.path.isdir(parent):
-        try:
-            os.makedirs(parent, exist_ok=True)
-            os.chmod(parent, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO) 
-        except Exception as e:
-            print(f"Warning: Could not create DB directory: {e}")
-
+# ----------------------------- DB --------------------------------
 def _conn():
-    _ensure_db_dir()
     c = sqlite3.connect(DB_PATH, timeout=30)
     c.row_factory = sqlite3.Row
-    try:
-        c.execute("PRAGMA busy_timeout=30000")
-    except Exception:
-        pass
     return c
 
 def db_fetch(sql, args=()):
@@ -120,11 +120,9 @@ def db_write(sql, args=()):
         c.close()
 
 def init_db():
-    _ensure_db_dir()
     c = _conn()
     try:
         c.execute("PRAGMA journal_mode=WAL")
-        c.execute("PRAGMA synchronous=NORMAL")
         c.executescript("""
         CREATE TABLE IF NOT EXISTS api_keys(
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,21 +210,20 @@ def check_key(key, tool_id):
     if row["status"] != "active": return None, (jsonify(ok=False, error="API key suspended"), 403)
     exp = parse_iso(row["expires_at"])
     if exp and now_utc() > exp: return None, (jsonify(ok=False, error="API key expired"), 403)
-    
     allowed = (row["tools"] or "all").split(",")
     if "all" not in allowed and tool_id not in allowed:
         return None, (jsonify(ok=False, error=f"Key not allowed for tool '{tool_id}'"), 403)
-
     lim = int(row["req_limit"] or 0)
     if lim > 0 and int(row["req_count"] or 0) >= lim:
         return None, (jsonify(ok=False, error="Request limit reached"), 429)
-
     return row, None
 
 def log_request(key, name, tool, query, status):
     db_write(
         "INSERT INTO logs(key,name,tool,query,ip,status,ts) VALUES (?,?,?,?,?,?,?)",
-        (key, name, tool, str(query)[:400], request.headers.get("X-Forwarded-For", request.remote_addr or ""), status, iso(now_utc()))
+        (key, name, tool, str(query)[:400],
+         request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+         status, iso(now_utc()))
     )
 
 # ----------------------------- PROXY API -------------------------
@@ -240,7 +237,8 @@ def proxy(tool_id):
 
     row, err = check_key(user_key, tool_id)
     if err:
-        log_request(user_key, (row or {}).get("name", ""), tool_id, request.query_string.decode()[:300], "DENIED")
+        log_request(user_key, (row or {}).get("name", ""), tool_id,
+                    request.query_string.decode()[:300], "DENIED")
         return err
 
     params = {}
@@ -267,15 +265,17 @@ def proxy(tool_id):
         try:
             data = up.json()
             if isinstance(data, dict):
-                data.pop("by", None) 
+                data.pop("by", None)
                 data["by"] = row.get("by_name") or "SHAYAN_EXPLORER"
-                db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?", (iso(now_utc()), row["id"]))
+                db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?",
+                         (iso(now_utc()), row["id"]))
                 log_request(user_key, row["name"], tool_id, str(params), "OK")
                 return jsonify(data), up.status_code
         except Exception:
-            pass 
+            pass
 
-    db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?", (iso(now_utc()), row["id"]))
+    db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?",
+             (iso(now_utc()), row["id"]))
     log_request(user_key, row["name"], tool_id, str(params), "OK")
     return Response(content, status=up.status_code, content_type=ctype)
 
@@ -286,16 +286,7 @@ def root():
 
 @app.route("/health")
 def health():
-    db_ok = True
-    try:
-        db_one("SELECT 1 AS x")
-    except Exception:
-        db_ok = False
-    return jsonify(
-        ok=True, brand=BRAND, time=iso(now_utc()),
-        db_path=DB_PATH, db_ok=db_ok,
-        persistent=bool(os.environ.get("RENDER") or os.environ.get("DB_PATH"))
-    )
+    return jsonify(ok=True, brand=BRAND, time=iso(now_utc()), db=DB_PATH)
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
@@ -307,7 +298,8 @@ def admin_login():
             session["admin"] = True
             session["admin_user"] = u
             return redirect("/admin")
-        return Response(LOGIN_HTML.replace("__ERR__", "Invalid username or password"), 401, content_type="text/html")
+        return Response(LOGIN_HTML.replace("__ERR__", "Invalid username or password"),
+                        401, content_type="text/html")
     return Response(LOGIN_HTML.replace("__ERR__", ""), content_type="text/html")
 
 @app.route("/admin/logout")
@@ -363,8 +355,10 @@ def api_stats():
                 cnt += 1
         series.append({"date": d.isoformat(), "amount": round(amt, 2), "count": cnt})
 
-    return jsonify(ok=True, total_keys=total_keys, active_keys=active_keys, suspended_keys=suspended, expired_keys=expired,
-                   total_requests=total_requests, today_requests=today_requests, revenue_total=round(rev_total, 2), 
+    return jsonify(ok=True, total_keys=total_keys, active_keys=active_keys,
+                   suspended_keys=suspended, expired_keys=expired,
+                   total_requests=total_requests, today_requests=today_requests,
+                   revenue_total=round(rev_total, 2),
                    revenue_range=round(rev_range, 2), range=rng, series=series)
 
 @app.route("/admin/api/keys", methods=["GET"])
@@ -373,7 +367,9 @@ def api_keys_list():
     q = (request.args.get("q") or "").strip().lower()
     rows = [key_state(r) for r in db_fetch("SELECT * FROM api_keys ORDER BY id DESC")]
     if q:
-        rows = [r for r in rows if q in (r["key"] or "").lower() or q in (r["name"] or "").lower() or q in (r["tools"] or "").lower()]
+        rows = [r for r in rows if q in (r["key"] or "").lower()
+                or q in (r["name"] or "").lower()
+                or q in (r["tools"] or "").lower()]
     return jsonify(ok=True, keys=rows)
 
 @app.route("/admin/api/keys", methods=["POST"])
@@ -383,14 +379,17 @@ def api_keys_create():
     key = (d.get("key") or "").strip()
     if not key: key = "FT-" + secrets.token_hex(10).upper()
     if len(key) < 6: return jsonify(ok=False, error="Custom key must be at least 6 characters"), 400
-    if not all(ch.isalnum() or ch in "-_." for ch in key): return jsonify(ok=False, error="Key may only contain letters, numbers, - _ ."), 400
+    if not all(ch.isalnum() or ch in "-_." for ch in key):
+        return jsonify(ok=False, error="Key may only contain letters, numbers, - _ ."), 400
+    if db_one("SELECT id FROM api_keys WHERE key = ?", (key,)):
+        return jsonify(ok=False, error="This key already exists"), 409
 
-    if db_one("SELECT id FROM api_keys WHERE key = ?", (key,)): return jsonify(ok=False, error="This key already exists"), 409
     name = (d.get("name") or "").strip()[:60] or "unnamed"
     by_name = (d.get("by_name") or "").strip()[:60]
 
     tools = d.get("tools") or ["all"]
-    if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
+    if isinstance(tools, str):
+        tools = [x.strip() for x in tools.split(",") if x.strip()]
     tools = [t for t in tools if t in TOOL_MAP]
     tools_str = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
 
@@ -405,7 +404,6 @@ def api_keys_create():
 
     kid = db_write("INSERT INTO api_keys(key,name,by_name,tools,created_at,expires_at,req_limit,req_count,status,price,note) VALUES (?,?,?,?,?,?,?,0,'active',?,?)",
                    (key, name, by_name, tools_str, iso(now_utc()), expires_at, req_limit, price, note))
-    
     row = key_state(db_one("SELECT * FROM api_keys WHERE id = ?", (kid,)))
     return jsonify(ok=True, key=row)
 
@@ -421,18 +419,21 @@ def api_keys_edit(kid):
     if "by_name" in d: updates["by_name"] = (d.get("by_name") or "").strip()[:60]
     if "tools" in d:
         tools = d.get("tools") or ["all"]
-        if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
+        if isinstance(tools, str):
+            tools = [x.strip() for x in tools.split(",") if x.strip()]
         tools = [t for t in tools if t in TOOL_MAP]
         updates["tools"] = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
     if "req_limit" in d:
         try: updates["req_limit"] = max(0, int(d.get("req_limit") or 0))
         except Exception: updates["req_limit"] = 0
-    if "expires_ms" in d: updates["expires_at"] = ms_to_iso(d.get("expires_ms")) if d.get("expires_ms") else None
+    if "expires_ms" in d:
+        updates["expires_at"] = ms_to_iso(d.get("expires_ms")) if d.get("expires_ms") else None
     if "price" in d:
         try: updates["price"] = max(0.0, float(d.get("price") or 0))
         except Exception: updates["price"] = 0.0
     if "note" in d: updates["note"] = (d.get("note") or "").strip()[:300]
-    if "status" in d and d["status"] in ("active", "suspended"): updates["status"] = d["status"]
+    if "status" in d and d["status"] in ("active", "suspended"):
+        updates["status"] = d["status"]
 
     if updates:
         sets = ", ".join(f"{k}=?" for k in updates)
@@ -443,7 +444,8 @@ def api_keys_edit(kid):
 @app.route("/admin/api/keys/<int:kid>/reset", methods=["POST"])
 @admin_required
 def api_keys_reset(kid):
-    if not db_one("SELECT id FROM api_keys WHERE id=?", (kid,)): return jsonify(ok=False, error="Key not found"), 404
+    if not db_one("SELECT id FROM api_keys WHERE id=?", (kid,)):
+        return jsonify(ok=False, error="Key not found"), 404
     db_write("UPDATE api_keys SET req_count = 0 WHERE id = ?", (kid,))
     return jsonify(ok=True)
 
@@ -472,7 +474,7 @@ def api_logs():
     return jsonify(ok=True, logs=db_fetch(sql, tuple(args)))
 
 # ============================================================
-#                          LOGIN PAGE
+#                         LOGIN PAGE
 # ============================================================
 LOGIN_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -570,7 +572,8 @@ function startHacking(e) {
       const p = document.createElement('div');
       p.textContent = lines[i];
       if (i === lines.length - 1) p.innerHTML += ' <span class="blink">_</span>';
-      textDiv.appendChild(p); i++;
+      textDiv.appendChild(p);
+      i++;
     } else {
       clearInterval(interval);
       setTimeout(() => { document.getElementById('loginForm').submit(); }, 500);
@@ -583,7 +586,7 @@ function startHacking(e) {
 LOGIN_HTML = LOGIN_HTML.replace("__ERRBLOCK__", '<div class="err">__ERR__</div>')
 
 # ============================================================
-#                        DASHBOARD PAGE
+#                       DASHBOARD PAGE
 # ============================================================
 DASH_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -592,18 +595,15 @@ DASH_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
 <title>SHAYAN_EXPLORER · OSINT API CONTROL</title>
 <style>
-:root{
-  --bg:#03060d;--panel:rgba(10,18,32,.82);--panel2:rgba(13,24,42,.7);
+:root{--bg:#03060d;--panel:rgba(10,18,32,.82);--panel2:rgba(13,24,42,.7);
   --line:rgba(0,229,255,.16);--cyan:#00e5ff;--blue:#3b82f6;--violet:#8b5cf6;
-  --green:#22e08a;--red:#ff4d6d;--amber:#ffb020;--txt:#dceaff;--mut:#7b93b5;--r:16px;
-}
+  --green:#22e08a;--red:#ff4d6d;--amber:#ffb020;--txt:#dceaff;--mut:#7b93b5;--r:16px;}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;font-family:"Segoe UI",Inter,system-ui,-apple-system,sans-serif;
   color:var(--txt);background:var(--bg);overflow-x:hidden}
 body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
-  background:
-    radial-gradient(1100px 650px at 10% -10%,rgba(0,229,255,.13),transparent 60%),
+  background:radial-gradient(1100px 650px at 10% -10%,rgba(0,229,255,.13),transparent 60%),
     radial-gradient(900px 600px at 100% 0%,rgba(139,92,246,.14),transparent 55%),
     radial-gradient(900px 700px at 50% 120%,rgba(59,130,246,.12),transparent 60%);}
 body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
@@ -818,7 +818,7 @@ tr:hover td{background:rgba(0,229,255,.04)}
             <table>
               <thead><tr>
                 <th>Key</th><th>Name</th><th>Tools</th><th>Expiry</th>
-                <th>Used / Limit</th><th>Price</th><th>Dev</th><th>Status</th><th>Actions</th>
+                <th>Used / Limit</th><th>Price</th><th>By</th><th>Status</th><th>Actions</th>
               </tr></thead>
               <tbody id="keysBody"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
             </table>
@@ -889,8 +889,14 @@ tr:hover td{background:rgba(0,229,255,.04)}
     <label class="fl">Developer Name / "By" (Optional)</label>
     <input id="kByName" placeholder="e.g. SHAYAN_EXPLORER (Leave blank for default)">
     <div class="row2">
-      <div><label class="fl">Request Limit (0 = unlimited)</label><input id="kLimit" type="number" min="0" value="0"></div>
-      <div><label class="fl">Price (₹) — revenue</label><input id="kPrice" type="number" min="0" step="1" value="0"></div>
+      <div>
+        <label class="fl">Request Limit (0 = unlimited)</label>
+        <input id="kLimit" type="number" min="0" value="0">
+      </div>
+      <div>
+        <label class="fl">Price (₹) — revenue</label>
+        <input id="kPrice" type="number" min="0" step="1" value="0">
+      </div>
     </div>
     <label class="fl">Expiry Date &amp; Time (required)</label>
     <input id="kExpiry" type="datetime-local">
@@ -918,9 +924,12 @@ tr:hover td{background:rgba(0,229,255,.04)}
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let TOOLS = [], EDIT_ID = null;
+let TOOLS = [];
+let EDIT_ID = null;
 function toast(msg, type='ok'){
-  const d = document.createElement('div'); d.className = 'toast ' + type; d.textContent = msg;
+  const d = document.createElement('div');
+  d.className = 'toast ' + type;
+  d.textContent = msg;
   $('#toasts').appendChild(d);
   setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateX(30px)'; d.style.transition='.3s'; }, 2600);
   setTimeout(()=> d.remove(), 3000);
@@ -931,15 +940,20 @@ async function jget(url){
   try { return await r.json(); } catch(e){ return {ok:false, error:'Bad response'}; }
 }
 async function jsend(url, method, body){
-  const r = await fetch(url, {method, credentials:'same-origin',
-    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+  const r = await fetch(url, {
+    method, credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body || {})
+  });
   if(r.status === 401){ location.href = '/admin/login'; return null; }
   try { return await r.json(); } catch(e){ return {ok:false, error:'Bad response'}; }
 }
 const sidebar = $('#sidebar'), overlay = $('#overlay');
 function openMenu(){ sidebar.classList.add('open'); overlay.classList.add('show'); }
 function closeMenu(){ sidebar.classList.remove('open'); overlay.classList.remove('show'); }
-$('#menuBtn').addEventListener('click', ()=>{ if(sidebar.classList.contains('open')) closeMenu(); else openMenu(); });
+$('#menuBtn').addEventListener('click', ()=>{
+  if(sidebar.classList.contains('open')) closeMenu(); else openMenu();
+});
 overlay.addEventListener('click', closeMenu);
 $$('.nav-item').forEach(b => b.addEventListener('click', ()=> showView(b.dataset.view)));
 function showView(name){
@@ -966,7 +980,8 @@ async function loadOverview(){
   drawChart('#revChart', d.series);
 }
 function drawChart(sel, series){
-  const el = $(sel); if(!el) return;
+  const el = $(sel);
+  if(!el) return;
   if(!series || !series.length){ el.innerHTML = '<div class="empty">No data</div>'; return; }
   const max = Math.max(1, ...series.map(s => s.amount));
   el.innerHTML = series.map(s => {
@@ -980,7 +995,10 @@ async function loadKeys(){
   const d = await jget('/admin/api/keys?q=' + encodeURIComponent(q));
   if(!d || !d.ok) return;
   const tb = $('#keysBody');
-  if(!d.keys.length){ tb.innerHTML = '<tr><td colspan="9" class="empty">No keys yet. Click "+ GENERATE KEY".</td></tr>'; return; }
+  if(!d.keys.length){
+    tb.innerHTML = '<tr><td colspan="9" class="empty">No keys yet. Click "+ GENERATE KEY".</td></tr>';
+    return;
+  }
   tb.innerHTML = d.keys.map(k => {
     let badge = '<span class="badge b-active">ACTIVE</span>';
     if(k.expired) badge = '<span class="badge b-exp">EXPIRED</span>';
@@ -1004,46 +1022,84 @@ async function loadKeys(){
         '<button class="btn amber sm" data-act="reset" data-id="'+k.id+'">RESTART</button>' +
         '<button class="btn green sm" data-act="toggle" data-id="'+k.id+'" data-status="'+k.status+'">'+(k.status==='active'?'SUSPEND':'UNSUSPEND')+'</button>' +
         '<button class="btn red sm" data-act="del" data-id="'+k.id+'">DELETE</button>' +
-      '</div></td></tr>';
+      '</div></td>' +
+    '</tr>';
   }).join('');
 }
 $('#keysBody').addEventListener('click', async (e) => {
-  const btn = e.target.closest('button[data-act]'); if(!btn) return;
+  const btn = e.target.closest('button[data-act]');
+  if(!btn) return;
   const act = btn.dataset.act;
-  if(act === 'copy'){ try { await navigator.clipboard.writeText(btn.dataset.key); toast('Key copied','ok'); } catch(err){ toast('Copy failed','err'); } return; }
-  if(act === 'edit'){ const d = await jget('/admin/api/keys'); const k = d.keys.find(x => String(x.id) === btn.dataset.id); if(k) openKeyModal(k); return; }
-  if(act === 'reset'){ if(!confirm('Reset request counter for this key?')) return; const r = await jsend('/admin/api/keys/'+btn.dataset.id+'/reset','POST',{}); toast(r && r.ok ? 'Counter reset' : 'Failed', r && r.ok ? 'ok' : 'err'); loadKeys(); return; }
-  if(act === 'toggle'){ const newStatus = btn.dataset.status === 'active' ? 'suspended' : 'active'; const r = await jsend('/admin/api/keys/'+btn.dataset.id,'PATCH',{status:newStatus}); toast(r && r.ok ? 'Status updated' : 'Failed', r && r.ok ? 'ok' : 'err'); loadKeys(); return; }
-  if(act === 'del'){ if(!confirm('Delete this key permanently?')) return; const r = await jsend('/admin/api/keys/'+btn.dataset.id,'DELETE',{}); toast(r && r.ok ? 'Key deleted' : 'Failed', r && r.ok ? 'ok' : 'err'); loadKeys(); return; }
+  if(act === 'copy'){
+    try { await navigator.clipboard.writeText(btn.dataset.key); toast('Key copied', 'ok'); }
+    catch(err){ toast('Copy failed', 'err'); }
+    return;
+  }
+  if(act === 'edit'){
+    const d = await jget('/admin/api/keys');
+    const k = d.keys.find(x => String(x.id) === btn.dataset.id);
+    if(k) openKeyModal(k);
+    return;
+  }
+  if(act === 'reset'){
+    if(!confirm('Reset request counter for this key?')) return;
+    const r = await jsend('/admin/api/keys/'+btn.dataset.id+'/reset', 'POST', {});
+    toast(r && r.ok ? 'Counter reset' : 'Failed', r && r.ok ? 'ok' : 'err');
+    loadKeys(); return;
+  }
+  if(act === 'toggle'){
+    const newStatus = btn.dataset.status === 'active' ? 'suspended' : 'active';
+    const r = await jsend('/admin/api/keys/'+btn.dataset.id, 'PATCH', {status:newStatus});
+    toast(r && r.ok ? 'Status updated' : 'Failed', r && r.ok ? 'ok' : 'err');
+    loadKeys(); return;
+  }
+  if(act === 'del'){
+    if(!confirm('Delete this key permanently?')) return;
+    const r = await jsend('/admin/api/keys/'+btn.dataset.id, 'DELETE', {});
+    toast(r && r.ok ? 'Key deleted' : 'Failed', r && r.ok ? 'ok' : 'err');
+    loadKeys(); return;
+  }
 });
 async function openKeyModal(k){
   EDIT_ID = k ? k.id : null;
   $('#modalTitle').textContent = k ? 'EDIT API KEY' : 'GENERATE API KEY';
   $('#saveKeyBtn').textContent = k ? 'SAVE CHANGES' : 'GENERATE KEY';
-  $('#kKey').value    = k ? k.key : ''; $('#kKey').disabled = !!k;
+  $('#kKey').value    = k ? k.key : '';
+  $('#kKey').disabled = !!k;
   $('#kName').value   = k ? (k.name || '') : '';
   $('#kByName').value = k ? (k.by_name || '') : '';
   $('#kLimit').value  = k ? (k.req_limit || 0) : 0;
   $('#kPrice').value  = k ? (k.price || 0) : 0;
   $('#kNote').value   = k ? (k.note || '') : '';
-  if(k && k.expires_ms) setExpiryAt(k.expires_ms); else setExpiry(86400000);
+  if(k && k.expires_ms) setExpiryAt(k.expires_ms);
+  else setExpiry(86400000);
   await renderToolGrid(k ? (k.tools || 'all').split(',') : ['all']);
-  $('#keyModal').classList.add('show'); document.body.style.overflow = 'hidden';
+  $('#keyModal').classList.add('show');
+  document.body.style.overflow = 'hidden';
 }
-function closeModal(id){ $('#'+id).classList.remove('show'); document.body.style.overflow = ''; }
+function closeModal(id){
+  $('#'+id).classList.remove('show');
+  document.body.style.overflow = '';
+}
 function setExpiryAt(ms){
-  const d = new Date(ms), p = n => String(n).padStart(2,'0');
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2,'0');
   $('#kExpiry').value = d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
 }
 function setExpiry(offsetMs){ setExpiryAt(Date.now() + offsetMs); }
 function randomKey(){
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let out = 'FT-';
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = 'FT-';
   for(let i=0;i<16;i++) out += chars[Math.floor(Math.random()*chars.length)];
   $('#kKey').value = out;
 }
 async function renderToolGrid(selected){
-  if(!TOOLS.length){ const d = await jget('/admin/api/tools'); TOOLS = (d && d.tools) ? d.tools : []; }
-  const sel = selected.map(s=>s.trim()).filter(Boolean); const all = sel.includes('all');
+  if(!TOOLS.length){
+    const d = await jget('/admin/api/tools');
+    TOOLS = (d && d.tools) ? d.tools : [];
+  }
+  const sel = selected.map(s=>s.trim()).filter(Boolean);
+  const all = sel.includes('all');
   $('#toolGrid').innerHTML = TOOLS.map(t =>
     '<label class="tool-item"><input type="checkbox" class="toolChk" value="'+esc(t.id)+'"'+
     ((all || sel.includes(t.id)) ? ' checked' : '')+'> '+esc(t.label)+'</label>'
@@ -1051,33 +1107,60 @@ async function renderToolGrid(selected){
   updateSelAllBtn();
 }
 function toggleAllTools(){
-  const boxes = $$('.toolChk'); const allChecked = boxes.every(b => b.checked);
-  boxes.forEach(b => b.checked = !allChecked); updateSelAllBtn();
+  const boxes = $$('.toolChk');
+  const allChecked = boxes.every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  updateSelAllBtn();
 }
 function updateSelAllBtn(){
-  const boxes = $$('.toolChk'); const allChecked = boxes.length && boxes.every(b => b.checked);
+  const boxes = $$('.toolChk');
+  const allChecked = boxes.length && boxes.every(b => b.checked);
   $('#selAllBtn').textContent = allChecked ? 'UNSELECT ALL' : 'SELECT ALL';
 }
-document.addEventListener('change', e => { if(e.target.classList && e.target.classList.contains('toolChk')) updateSelAllBtn(); });
+document.addEventListener('change', e => {
+  if(e.target.classList && e.target.classList.contains('toolChk')) updateSelAllBtn();
+});
 async function saveKey(){
   const tools = $$('.toolChk').filter(b => b.checked).map(b => b.value);
-  if(!tools.length){ toast('Select at least one tool','err'); return; }
-  const expVal = $('#kExpiry').value; if(!expVal){ toast('Expiry date & time is required','err'); return; }
-  const payload = { name: $('#kName').value.trim(), by_name: $('#kByName').value.trim(), tools: tools,
-    expires_ms: new Date(expVal).getTime(), req_limit: parseInt($('#kLimit').value||'0',10)||0,
-    price: parseFloat($('#kPrice').value||'0')||0, note: $('#kNote').value.trim() };
+  if(!tools.length){ toast('Select at least one tool', 'err'); return; }
+  const expVal = $('#kExpiry').value;
+  if(!expVal){ toast('Expiry date & time is required', 'err'); return; }
+  const payload = {
+    name: $('#kName').value.trim(),
+    by_name: $('#kByName').value.trim(),
+    tools: tools,
+    expires_ms: new Date(expVal).getTime(),
+    req_limit: parseInt($('#kLimit').value || '0', 10) || 0,
+    price: parseFloat($('#kPrice').value || '0') || 0,
+    note: $('#kNote').value.trim()
+  };
   let r;
-  if(EDIT_ID){ r = await jsend('/admin/api/keys/' + EDIT_ID,'PATCH',payload); }
-  else { payload.key = $('#kKey').value.trim(); r = await jsend('/admin/api/keys','POST',payload); }
-  if(r && r.ok){ toast(EDIT_ID ? 'Key updated' : 'Key generated successfully','ok'); closeModal('keyModal'); EDIT_ID = null; showView('keys'); loadKeys(); loadOverview(); }
-  else { toast((r && r.error) || 'Failed','err'); }
+  if(EDIT_ID){
+    r = await jsend('/admin/api/keys/' + EDIT_ID, 'PATCH', payload);
+  } else {
+    payload.key = $('#kKey').value.trim();
+    r = await jsend('/admin/api/keys', 'POST', payload);
+  }
+  if(r && r.ok){
+    toast(EDIT_ID ? 'Key updated' : 'Key generated successfully', 'ok');
+    closeModal('keyModal');
+    EDIT_ID = null;
+    showView('keys');
+    loadKeys();
+    loadOverview();
+  } else {
+    toast((r && r.error) || 'Failed', 'err');
+  }
 }
 async function loadLogs(){
   const q = $('#logSearch').value.trim();
   const d = await jget('/admin/api/logs?limit=300&q=' + encodeURIComponent(q));
   if(!d || !d.ok) return;
   const tb = $('#logsBody');
-  if(!d.logs.length){ tb.innerHTML = '<tr><td colspan="7" class="empty">No logs yet.</td></tr>'; return; }
+  if(!d.logs.length){
+    tb.innerHTML = '<tr><td colspan="7" class="empty">No logs yet.</td></tr>';
+    return;
+  }
   tb.innerHTML = d.logs.map(l =>
     '<tr>' +
       '<td style="font-size:10.6px;white-space:nowrap">'+esc((l.ts||'').replace('T',' ').replace('+00:00',''))+'</td>' +
@@ -1087,7 +1170,8 @@ async function loadLogs(){
       '<td style="font-size:10.6px;max-width:230px;word-break:break-all">'+esc(l.query)+'</td>' +
       '<td style="font-size:10.4px">'+esc(l.ip)+'</td>' +
       '<td><span class="badge '+(l.status==='OK'?'b-active':'b-exp')+'">'+esc(l.status)+'</span></td>' +
-    '</tr>').join('');
+    '</tr>'
+  ).join('');
 }
 async function loadRevenue(){
   const rng = $('#revRange').value;
@@ -1099,18 +1183,24 @@ async function loadRevenue(){
   drawChart('#revChart2', d.series);
 }
 async function renderDocs(){
-  if(!TOOLS.length){ const d = await jget('/admin/api/tools'); TOOLS = (d && d.tools) ? d.tools : []; }
+  if(!TOOLS.length){
+    const d = await jget('/admin/api/tools');
+    TOOLS = (d && d.tools) ? d.tools : [];
+  }
   $('#baseUrl').textContent = location.origin + '/api';
   $('#docsList').innerHTML = TOOLS.map(t => {
     const qs = ['key=YOUR_KEY'].concat(t.params.map(p => p + '=VALUE')).join('&');
     return '<div class="doc-item">' +
       '<div class="u">GET ' + esc(location.origin) + '/api/' + esc(t.id) + '?' + esc(qs) + '</div>' +
-      '<div class="d">' + esc(t.label) + ' · params: ' + esc(t.params.join(', ')) + '</div></div>';
+      '<div class="d">' + esc(t.label) + ' · params: ' + esc(t.params.join(', ')) + '</div>' +
+    '</div>';
   }).join('');
 }
 (async function init(){
-  const d = await jget('/admin/api/tools'); TOOLS = (d && d.tools) ? d.tools : [];
-  loadOverview(); loadKeys();
+  const d = await jget('/admin/api/tools');
+  TOOLS = (d && d.tools) ? d.tools : [];
+  loadOverview();
+  loadKeys();
 })();
 </script>
 </body>
@@ -1122,9 +1212,8 @@ init_db()
 if __name__ == "__main__":
     print("=" * 62)
     print("  SHAYAN_EXPLORER · OSINT API CONTROL CENTER")
-    print("  Developer: SHAYAN_EXPLORER")
-    print("  URL   : http://127.0.0.1:5000")
-    print(f"  DB    : {DB_PATH}  (persistent={os.environ.get('RENDER') == 'true' or bool(os.environ.get('DB_PATH'))})")
-    print(f"  Admin : {ADMIN_USER} / {ADMIN_PASS}")
+    print(f"  DB     : {DB_PATH}")
+    print("  URL    : http://127.0.0.1:5000")
+    print(f"  Admin  : {ADMIN_USER} / {ADMIN_PASS}")
     print("=" * 62)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
