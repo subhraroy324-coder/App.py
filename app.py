@@ -91,6 +91,7 @@ TOOL_MAP = {t["id"]: t for t in TOOLS}
 
 # ----------------------------- DB --------------------------------
 def _ensure_db_dir():
+    """Create the database directory if it doesn't exist."""
     parent = os.path.dirname(DB_PATH)
     if parent and not os.path.isdir(parent):
         try:
