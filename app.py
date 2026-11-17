@@ -2,14 +2,11 @@
 #  SHAYAN_EXPLORER · OSINT API CONTROL CENTER
 #  Developer: SHAYAN_EXPLORER
 # ============================================================
-#  LOCAL RUN:
-#     pip install -r requirements.txt
-#     python app.py
-# ============================================================
 
 import os
 import sqlite3
 import secrets
+import stat
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
@@ -19,21 +16,15 @@ import requests
 # ----------------------------- CONFIG -----------------------------
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-
 def _resolve_db_path():
     """Choose the DB path so data survives Render restarts."""
-    # 1) Explicit env var always wins
     if os.environ.get("DB_PATH"):
         return os.environ["DB_PATH"]
-    # 2) Render: use the persistent disk mount point
     if os.environ.get("RENDER"):
         return "/var/data/osint.db"
-    # 3) Vercel: ephemeral /tmp
     if os.environ.get("VERCEL"):
         return "/tmp/osint.db"
-    # 4) Local dev
     return os.path.join(APP_DIR, "osint.db")
-
 
 DB_PATH = _resolve_db_path()
 
@@ -41,10 +32,8 @@ ADMIN_USER = os.environ.get("ADMIN_USER", "vernex")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "vernex@16vx")
 SECRET_KEY = os.environ.get("SECRET_KEY", "shayan-explorer-super-secret-key")
 
-# 🔴 UPSTREAM API SETTINGS
 UPSTREAM_BASE = os.environ.get("UPSTREAM_BASE", "https://ft-osint-api.duckdns.org/api").rstrip("/")
 UPSTREAM_KEY = os.environ.get("UPSTREAM_KEY", "explorer16")
-
 BRAND = os.environ.get("BRAND", "SHAYAN_EXPLORER")
 
 app = Flask(__name__)
@@ -88,17 +77,16 @@ TOOLS = [
 ]
 TOOL_MAP = {t["id"]: t for t in TOOLS}
 
-
-# ----------------------------- DB --------------------------------
+# ----------------------------- DB HELPERS --------------------------------
 def _ensure_db_dir():
-    """Create the database directory if it doesn't exist."""
+    """Forces the creation of the directory and sets permissions for Render."""
     parent = os.path.dirname(DB_PATH)
     if parent and not os.path.isdir(parent):
         try:
             os.makedirs(parent, exist_ok=True)
-        except Exception:
-            pass
-
+            os.chmod(parent, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO) 
+        except Exception as e:
+            print(f"Warning: Could not create DB directory: {e}")
 
 def _conn():
     _ensure_db_dir()
@@ -110,7 +98,6 @@ def _conn():
         pass
     return c
 
-
 def db_fetch(sql, args=()):
     c = _conn()
     try:
@@ -119,11 +106,9 @@ def db_fetch(sql, args=()):
     finally:
         c.close()
 
-
 def db_one(sql, args=()):
     rows = db_fetch(sql, args)
     return rows[0] if rows else None
-
 
 def db_write(sql, args=()):
     c = _conn()
@@ -133,7 +118,6 @@ def db_write(sql, args=()):
         return cur.lastrowid
     finally:
         c.close()
-
 
 def init_db():
     _ensure_db_dir()
@@ -178,38 +162,27 @@ def init_db():
     finally:
         c.close()
 
-
 # ----------------------------- TIME ------------------------------
 def now_utc():
     return datetime.now(timezone.utc)
 
-
 def iso(dt):
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+    if dt is None: return None
+    if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat(timespec="seconds")
 
-
 def parse_iso(s):
-    if not s:
-        return None
+    if not s: return None
     try:
         d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=timezone.utc)
+        if d.tzinfo is None: d = d.replace(tzinfo=timezone.utc)
         return d.astimezone(timezone.utc)
     except Exception:
         return None
 
-
 def ms_to_iso(ms):
-    try:
-        return iso(datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc))
-    except Exception:
-        return None
-
+    try: return iso(datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc))
+    except Exception: return None
 
 # ----------------------------- AUTH ------------------------------
 def admin_required(f):
@@ -222,11 +195,9 @@ def admin_required(f):
         return f(*a, **kw)
     return wrapper
 
-
 # ----------------------------- KEY HELPERS -----------------------
 def key_state(row):
-    if not row:
-        return row
+    if not row: return row
     exp = parse_iso(row.get("expires_at"))
     row["expired"] = bool(exp and now_utc() > exp)
     row["expires_ms"] = int(exp.timestamp() * 1000) if exp else None
@@ -235,17 +206,13 @@ def key_state(row):
     row["remaining"] = max(0, lim - used) if lim > 0 else None
     return row
 
-
 def check_key(key, tool_id):
     row = db_one("SELECT * FROM api_keys WHERE key = ?", (key,))
-    if not row:
-        return None, (jsonify(ok=False, error="Invalid API key"), 401)
-    if row["status"] != "active":
-        return None, (jsonify(ok=False, error="API key suspended"), 403)
+    if not row: return None, (jsonify(ok=False, error="Invalid API key"), 401)
+    if row["status"] != "active": return None, (jsonify(ok=False, error="API key suspended"), 403)
     exp = parse_iso(row["expires_at"])
-    if exp and now_utc() > exp:
-        return None, (jsonify(ok=False, error="API key expired"), 403)
-
+    if exp and now_utc() > exp: return None, (jsonify(ok=False, error="API key expired"), 403)
+    
     allowed = (row["tools"] or "all").split(",")
     if "all" not in allowed and tool_id not in allowed:
         return None, (jsonify(ok=False, error=f"Key not allowed for tool '{tool_id}'"), 403)
@@ -256,38 +223,30 @@ def check_key(key, tool_id):
 
     return row, None
 
-
 def log_request(key, name, tool, query, status):
     db_write(
         "INSERT INTO logs(key,name,tool,query,ip,status,ts) VALUES (?,?,?,?,?,?,?)",
-        (key, name, tool, str(query)[:400],
-         request.headers.get("X-Forwarded-For", request.remote_addr or ""),
-         status, iso(now_utc()))
+        (key, name, tool, str(query)[:400], request.headers.get("X-Forwarded-For", request.remote_addr or ""), status, iso(now_utc()))
     )
-
 
 # ----------------------------- PROXY API -------------------------
 @app.route("/api/<tool_id>", methods=["GET"])
 def proxy(tool_id):
     t = TOOL_MAP.get(tool_id)
-    if not t:
-        return jsonify(ok=False, error="Unknown endpoint"), 404
+    if not t: return jsonify(ok=False, error="Unknown endpoint"), 404
 
     user_key = (request.args.get("key") or "").strip()
-    if not user_key:
-        return jsonify(ok=False, error="Missing key parameter"), 401
+    if not user_key: return jsonify(ok=False, error="Missing key parameter"), 401
 
     row, err = check_key(user_key, tool_id)
     if err:
-        log_request(user_key, (row or {}).get("name", ""), tool_id,
-                    request.query_string.decode()[:300], "DENIED")
+        log_request(user_key, (row or {}).get("name", ""), tool_id, request.query_string.decode()[:300], "DENIED")
         return err
 
     params = {}
     for p in t["params"]:
         v = (request.args.get(p) or "").strip()
-        if not v:
-            return jsonify(ok=False, error=f"Missing parameter '{p}'"), 400
+        if not v: return jsonify(ok=False, error=f"Missing parameter '{p}'"), 400
         params[p] = v
 
     payload = dict(params)
@@ -308,30 +267,22 @@ def proxy(tool_id):
         try:
             data = up.json()
             if isinstance(data, dict):
-                data.pop("by", None)
+                data.pop("by", None) 
                 data["by"] = row.get("by_name") or "SHAYAN_EXPLORER"
-                db_write(
-                    "UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?",
-                    (iso(now_utc()), row["id"])
-                )
+                db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?", (iso(now_utc()), row["id"]))
                 log_request(user_key, row["name"], tool_id, str(params), "OK")
                 return jsonify(data), up.status_code
         except Exception:
-            pass
+            pass 
 
-    db_write(
-        "UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?",
-        (iso(now_utc()), row["id"])
-    )
+    db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?", (iso(now_utc()), row["id"]))
     log_request(user_key, row["name"], tool_id, str(params), "OK")
     return Response(content, status=up.status_code, content_type=ctype)
-
 
 # ----------------------------- ROUTES ----------------------------
 @app.route("/")
 def root():
     return redirect("/admin")
-
 
 @app.route("/health")
 def health():
@@ -346,7 +297,6 @@ def health():
         persistent=bool(os.environ.get("RENDER") or os.environ.get("DB_PATH"))
     )
 
-
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     if request.method == "POST":
@@ -357,40 +307,24 @@ def admin_login():
             session["admin"] = True
             session["admin_user"] = u
             return redirect("/admin")
-        return Response(LOGIN_HTML.replace("__ERR__", "Invalid username or password"),
-                        401, content_type="text/html")
+        return Response(LOGIN_HTML.replace("__ERR__", "Invalid username or password"), 401, content_type="text/html")
     return Response(LOGIN_HTML.replace("__ERR__", ""), content_type="text/html")
-
 
 @app.route("/admin/logout")
 def admin_logout():
     session.clear()
     return redirect("/admin/login")
 
-
 @app.route("/admin")
 @admin_required
 def admin_home():
     return Response(DASH_HTML, content_type="text/html")
-
 
 # ----------------------------- ADMIN API -------------------------
 @app.route("/admin/api/tools")
 @admin_required
 def api_tools():
     return jsonify(ok=True, tools=TOOLS)
-
-
-@app.route("/admin/api/db-info")
-@admin_required
-def api_db_info():
-    try:
-        size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
-    except Exception:
-        size = 0
-    return jsonify(ok=True, db_path=DB_PATH, db_size=size,
-                   persistent=bool(os.environ.get("RENDER") or os.environ.get("DB_PATH")))
-
 
 @app.route("/admin/api/stats")
 @admin_required
@@ -412,8 +346,7 @@ def api_stats():
     rev_range = 0.0
     for k in keys:
         cd = parse_iso(k["created_at"])
-        if cd and cd >= start:
-            rev_range += float(k["price"] or 0)
+        if cd and cd >= start: rev_range += float(k["price"] or 0)
 
     rev_total = sum(float(k["price"] or 0) for k in keys)
 
@@ -430,14 +363,9 @@ def api_stats():
                 cnt += 1
         series.append({"date": d.isoformat(), "amount": round(amt, 2), "count": cnt})
 
-    return jsonify(
-        ok=True, total_keys=total_keys, active_keys=active_keys,
-        suspended_keys=suspended, expired_keys=expired,
-        total_requests=total_requests, today_requests=today_requests,
-        revenue_total=round(rev_total, 2), revenue_range=round(rev_range, 2),
-        range=rng, series=series
-    )
-
+    return jsonify(ok=True, total_keys=total_keys, active_keys=active_keys, suspended_keys=suspended, expired_keys=expired,
+                   total_requests=total_requests, today_requests=today_requests, revenue_total=round(rev_total, 2), 
+                   revenue_range=round(rev_range, 2), range=rng, series=series)
 
 @app.route("/admin/api/keys", methods=["GET"])
 @admin_required
@@ -445,95 +373,66 @@ def api_keys_list():
     q = (request.args.get("q") or "").strip().lower()
     rows = [key_state(r) for r in db_fetch("SELECT * FROM api_keys ORDER BY id DESC")]
     if q:
-        rows = [r for r in rows
-                if q in (r["key"] or "").lower()
-                or q in (r["name"] or "").lower()
-                or q in (r["tools"] or "").lower()]
+        rows = [r for r in rows if q in (r["key"] or "").lower() or q in (r["name"] or "").lower() or q in (r["tools"] or "").lower()]
     return jsonify(ok=True, keys=rows)
-
 
 @app.route("/admin/api/keys", methods=["POST"])
 @admin_required
 def api_keys_create():
     d = request.get_json(silent=True) or {}
     key = (d.get("key") or "").strip()
-    if not key:
-        key = "FT-" + secrets.token_hex(10).upper()
-    if len(key) < 6:
-        return jsonify(ok=False, error="Custom key must be at least 6 characters"), 400
-    if not all(ch.isalnum() or ch in "-_." for ch in key):
-        return jsonify(ok=False, error="Key may only contain letters, numbers, - _ ."), 400
+    if not key: key = "FT-" + secrets.token_hex(10).upper()
+    if len(key) < 6: return jsonify(ok=False, error="Custom key must be at least 6 characters"), 400
+    if not all(ch.isalnum() or ch in "-_." for ch in key): return jsonify(ok=False, error="Key may only contain letters, numbers, - _ ."), 400
 
-    if db_one("SELECT id FROM api_keys WHERE key = ?", (key,)):
-        return jsonify(ok=False, error="This key already exists"), 409
-
+    if db_one("SELECT id FROM api_keys WHERE key = ?", (key,)): return jsonify(ok=False, error="This key already exists"), 409
     name = (d.get("name") or "").strip()[:60] or "unnamed"
     by_name = (d.get("by_name") or "").strip()[:60]
 
     tools = d.get("tools") or ["all"]
-    if isinstance(tools, str):
-        tools = [x.strip() for x in tools.split(",") if x.strip()]
+    if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
     tools = [t for t in tools if t in TOOL_MAP]
     tools_str = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
 
     expires_ms = d.get("expires_ms")
     expires_at = ms_to_iso(expires_ms) if expires_ms else None
 
-    try:
-        req_limit = max(0, int(d.get("req_limit") or 0))
-    except Exception:
-        req_limit = 0
-    try:
-        price = max(0.0, float(d.get("price") or 0))
-    except Exception:
-        price = 0.0
+    try: req_limit = max(0, int(d.get("req_limit") or 0))
+    except Exception: req_limit = 0
+    try: price = max(0.0, float(d.get("price") or 0))
+    except Exception: price = 0.0
     note = (d.get("note") or "").strip()[:300]
 
-    kid = db_write(
-        "INSERT INTO api_keys(key,name,by_name,tools,created_at,expires_at,req_limit,req_count,status,price,note) "
-        "VALUES (?,?,?,?,?,?,?,0,'active',?,?)",
-        (key, name, by_name, tools_str, iso(now_utc()), expires_at, req_limit, price, note)
-    )
-
+    kid = db_write("INSERT INTO api_keys(key,name,by_name,tools,created_at,expires_at,req_limit,req_count,status,price,note) VALUES (?,?,?,?,?,?,?,0,'active',?,?)",
+                   (key, name, by_name, tools_str, iso(now_utc()), expires_at, req_limit, price, note))
+    
     row = key_state(db_one("SELECT * FROM api_keys WHERE id = ?", (kid,)))
     return jsonify(ok=True, key=row)
-
 
 @app.route("/admin/api/keys/<int:kid>", methods=["PATCH"])
 @admin_required
 def api_keys_edit(kid):
     row = db_one("SELECT * FROM api_keys WHERE id = ?", (kid,))
-    if not row:
-        return jsonify(ok=False, error="Key not found"), 404
+    if not row: return jsonify(ok=False, error="Key not found"), 404
 
     d = request.get_json(silent=True) or {}
     updates = {}
-    if "name" in d:
-        updates["name"] = (d.get("name") or "").strip()[:60] or "unnamed"
-    if "by_name" in d:
-        updates["by_name"] = (d.get("by_name") or "").strip()[:60]
+    if "name" in d: updates["name"] = (d.get("name") or "").strip()[:60] or "unnamed"
+    if "by_name" in d: updates["by_name"] = (d.get("by_name") or "").strip()[:60]
     if "tools" in d:
         tools = d.get("tools") or ["all"]
-        if isinstance(tools, str):
-            tools = [x.strip() for x in tools.split(",") if x.strip()]
+        if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
         tools = [t for t in tools if t in TOOL_MAP]
         updates["tools"] = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
     if "req_limit" in d:
-        try:
-            updates["req_limit"] = max(0, int(d.get("req_limit") or 0))
-        except Exception:
-            updates["req_limit"] = 0
-    if "expires_ms" in d:
-        updates["expires_at"] = ms_to_iso(d.get("expires_ms")) if d.get("expires_ms") else None
+        try: updates["req_limit"] = max(0, int(d.get("req_limit") or 0))
+        except Exception: updates["req_limit"] = 0
+    if "expires_ms" in d: updates["expires_at"] = ms_to_iso(d.get("expires_ms")) if d.get("expires_ms") else None
     if "price" in d:
-        try:
-            updates["price"] = max(0.0, float(d.get("price") or 0))
-        except Exception:
-            updates["price"] = 0.0
-    if "note" in d:
-        updates["note"] = (d.get("note") or "").strip()[:300]
-    if "status" in d and d["status"] in ("active", "suspended"):
-        updates["status"] = d["status"]
+        try: updates["price"] = max(0.0, float(d.get("price") or 0))
+        except Exception: updates["price"] = 0.0
+    if "note" in d: updates["note"] = (d.get("note") or "").strip()[:300]
+    if "status" in d and d["status"] in ("active", "suspended"): updates["status"] = d["status"]
 
     if updates:
         sets = ", ".join(f"{k}=?" for k in updates)
@@ -541,15 +440,12 @@ def api_keys_edit(kid):
 
     return jsonify(ok=True, key=key_state(db_one("SELECT * FROM api_keys WHERE id = ?", (kid,))))
 
-
 @app.route("/admin/api/keys/<int:kid>/reset", methods=["POST"])
 @admin_required
 def api_keys_reset(kid):
-    if not db_one("SELECT id FROM api_keys WHERE id=?", (kid,)):
-        return jsonify(ok=False, error="Key not found"), 404
+    if not db_one("SELECT id FROM api_keys WHERE id=?", (kid,)): return jsonify(ok=False, error="Key not found"), 404
     db_write("UPDATE api_keys SET req_count = 0 WHERE id = ?", (kid,))
     return jsonify(ok=True)
-
 
 @app.route("/admin/api/keys/<int:kid>", methods=["DELETE"])
 @admin_required
@@ -557,33 +453,26 @@ def api_keys_delete(kid):
     db_write("DELETE FROM api_keys WHERE id = ?", (kid,))
     return jsonify(ok=True)
 
-
 @app.route("/admin/api/logs")
 @admin_required
 def api_logs():
     q = (request.args.get("q") or "").strip()
     key = (request.args.get("key") or "").strip()
-    try:
-        limit = min(1000, max(1, int(request.args.get("limit") or 200)))
-    except Exception:
-        limit = 200
+    try: limit = min(1000, max(1, int(request.args.get("limit") or 200)))
+    except Exception: limit = 200
 
     sql = "SELECT * FROM logs WHERE 1=1"
     args = []
-    if key:
-        sql += " AND key = ?"
-        args.append(key)
+    if key: sql += " AND key = ?"; args.append(key)
     if q:
         sql += " AND (key LIKE ? OR name LIKE ? OR tool LIKE ? OR query LIKE ?)"
-        like = f"%{q}%"
-        args += [like, like, like, like]
+        like = f"%{q}%"; args += [like, like, like, like]
     sql += " ORDER BY id DESC LIMIT ?"
     args.append(limit)
     return jsonify(ok=True, logs=db_fetch(sql, tuple(args)))
 
-
 # ============================================================
-#                    LOGIN PAGE (same as yours)
+#                          LOGIN PAGE
 # ============================================================
 LOGIN_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -693,9 +582,8 @@ function startHacking(e) {
 </html>"""
 LOGIN_HTML = LOGIN_HTML.replace("__ERRBLOCK__", '<div class="err">__ERR__</div>')
 
-
 # ============================================================
-#                    DASHBOARD PAGE (unchanged)
+#                        DASHBOARD PAGE
 # ============================================================
 DASH_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -1227,7 +1115,6 @@ async function renderDocs(){
 </script>
 </body>
 </html>"""
-
 
 # ----------------------------- BOOT ------------------------------
 init_db()
