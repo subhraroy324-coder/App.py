@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: shayan-osint-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASS
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: UPSTREAM_BASE
+        value: https://ft-osint-api.duckdns.org/api
+      - key: UPSTREAM_KEY
+        sync: false
+      - key: DB_PATH
+        value: /var/data/osint.db
+    disk:
+      name: osint-data
+      mountPath: /var/data
+      sizeGB: 1
