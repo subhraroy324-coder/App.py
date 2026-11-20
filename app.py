@@ -2,17 +2,11 @@
 #  SHAYAN_EXPLORER · OSINT API CONTROL CENTER
 #  Developer: SHAYAN_EXPLORER
 # ============================================================
-#  LOCAL RUN:
-#     pip install -r requirements.txt
-#     python app.py
-#
-#  RAILWAY (persistent volume at /data):
-#     DB_PATH=/data/osint.db  (auto-detected if /data exists)
-# ============================================================
 
 import os
 import sqlite3
 import secrets
+import threading
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
@@ -23,22 +17,16 @@ import requests
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _resolve_db_path():
-    """Pick persistent DB path.
-    Priority: DB_PATH env → Railway /data → Vercel /tmp → local folder."""
     env_path = os.environ.get("DB_PATH")
-    if env_path:
-        return env_path
-    if os.path.isdir("/data"):
-        return "/data/osint.db"
-    if os.environ.get("VERCEL"):
-        return "/tmp/osint.db"
+    if env_path: return env_path
+    if os.path.isdir("/data"): return "/data/osint.db"
+    if os.environ.get("VERCEL"): return "/tmp/osint.db"
     return os.path.join(APP_DIR, "osint.db")
 
 DB_PATH = _resolve_db_path()
 try:
     _d = os.path.dirname(DB_PATH)
-    if _d:
-        os.makedirs(_d, exist_ok=True)
+    if _d: os.makedirs(_d, exist_ok=True)
 except Exception:
     pass
 
@@ -48,8 +36,13 @@ SECRET_KEY   = os.environ.get("SECRET_KEY", "shayan-explorer-super-secret-key")
 
 UPSTREAM_BASE = os.environ.get("UPSTREAM_BASE", "https://ft-osint-api.duckdns.org/api").rstrip("/")
 UPSTREAM_KEY  = os.environ.get("UPSTREAM_KEY", "explorer16")
-
 BRAND = os.environ.get("BRAND", "SHAYAN_EXPLORER")
+
+# Telegram bot settings
+TELEGRAM_BOT_TOKEN        = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_ADMIN_CHAT_ID    = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+TELEGRAM_WEBHOOK_SECRET   = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -101,8 +94,7 @@ def _conn():
 def db_fetch(sql, args=()):
     c = _conn()
     try:
-        cur = c.execute(sql, args)
-        return [dict(r) for r in cur.fetchall()]
+        return [dict(r) for r in c.execute(sql, args).fetchall()]
     finally:
         c.close()
 
@@ -125,44 +117,36 @@ def init_db():
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript("""
         CREATE TABLE IF NOT EXISTS api_keys(
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            key         TEXT UNIQUE NOT NULL,
-            name        TEXT DEFAULT '',
-            by_name     TEXT DEFAULT '',
-            tools       TEXT DEFAULT 'all',
-            created_at  TEXT NOT NULL,
-            expires_at  TEXT,
-            req_limit   INTEGER DEFAULT 0,
-            req_count   INTEGER DEFAULT 0,
-            status      TEXT DEFAULT 'active',
-            price       REAL DEFAULT 0,
-            note        TEXT DEFAULT '',
-            last_used   TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT UNIQUE NOT NULL,
+            name TEXT DEFAULT '',
+            by_name TEXT DEFAULT '',
+            tools TEXT DEFAULT 'all',
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            req_limit INTEGER DEFAULT 0,
+            req_count INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
+            price REAL DEFAULT 0,
+            note TEXT DEFAULT '',
+            last_used TEXT
         );
         CREATE TABLE IF NOT EXISTS logs(
-            id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            key     TEXT,
-            name    TEXT,
-            tool    TEXT,
-            query   TEXT,
-            ip      TEXT,
-            status  TEXT,
-            ts      TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT, name TEXT, tool TEXT, query TEXT,
+            ip TEXT, status TEXT, ts TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_logs_key ON logs(key);
         CREATE INDEX IF NOT EXISTS idx_logs_ts  ON logs(ts);
         """)
-        try:
-            c.execute("ALTER TABLE api_keys ADD COLUMN by_name TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
+        try: c.execute("ALTER TABLE api_keys ADD COLUMN by_name TEXT DEFAULT ''")
+        except sqlite3.OperationalError: pass
         c.commit()
     finally:
         c.close()
 
 # ----------------------------- TIME ------------------------------
-def now_utc():
-    return datetime.now(timezone.utc)
+def now_utc(): return datetime.now(timezone.utc)
 
 def iso(dt):
     if dt is None: return None
@@ -175,8 +159,7 @@ def parse_iso(s):
         d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
         if d.tzinfo is None: d = d.replace(tzinfo=timezone.utc)
         return d.astimezone(timezone.utc)
-    except Exception:
-        return None
+    except Exception: return None
 
 def ms_to_iso(ms):
     try: return iso(datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc))
@@ -226,6 +209,137 @@ def log_request(key, name, tool, query, status):
          status, iso(now_utc()))
     )
 
+# ============================================================
+#                  TELEGRAM BOT (WEBHOOK MODE)
+# ============================================================
+TG_STATE = {}   # {chat_id: {"step": "password"|"name", "data": {...}}}
+
+def _public_base():
+    return (PUBLIC_BASE_URL or request.host_url).rstrip("/")
+
+def tg_api(method, **params):
+    if not TELEGRAM_BOT_TOKEN: return None
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}",
+                          json=params, timeout=15)
+        return r.json()
+    except Exception:
+        return None
+
+def tg_send(chat_id, text, parse_mode="HTML", **kwargs):
+    return tg_api("sendMessage", chat_id=chat_id, text=text, parse_mode=parse_mode, **kwargs)
+
+def tg_handle_update(update):
+    msg = update.get("message") or update.get("edited_message")
+    if not msg: return
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    text = (msg.get("text") or "").strip()
+    if not chat_id or not text: return
+
+    # Auth check: if TELEGRAM_ADMIN_CHAT_ID is set, only that chat can use the bot
+    if TELEGRAM_ADMIN_CHAT_ID and str(chat_id) != TELEGRAM_ADMIN_CHAT_ID:
+        tg_send(chat_id, "⛔ <b>Unauthorized.</b>\nThis bot is restricted to the configured admin chat.")
+        return
+
+    low = text.lower()
+    if "@" in low: low = low.split("@")[0]
+
+    # ---- Commands ----
+    if low in ("/start", "/help"):
+        tg_send(chat_id,
+            "<b>SHAYAN_EXPLORER · OSINT Bot</b>\n\n"
+            "<b>Commands:</b>\n"
+            "/generatekey — create a new API key\n"
+            "/listkeys — show last 10 keys\n"
+            "/cancel — cancel current flow\n"
+            "/help — show this help\n\n"
+            "<i>Only the configured admin chat can use this bot.</i>")
+        return
+
+    if low == "/cancel":
+        TG_STATE.pop(chat_id, None)
+        tg_send(chat_id, "❌ Cancelled.")
+        return
+
+    if low == "/listkeys":
+        rows = db_fetch("SELECT key,name,status,expires_at FROM api_keys ORDER BY id DESC LIMIT 10")
+        if not rows:
+            tg_send(chat_id, "No keys yet. Send /generatekey")
+            return
+        lines = ["<b>Last 10 keys:</b>\n"]
+        for r in rows:
+            exp = parse_iso(r["expires_at"])
+            exp_str = exp.strftime("%Y-%m-%d") if exp else "never"
+            lines.append(f"• <code>{r['key']}</code>\n  {r['name'] or 'unnamed'} · {r['status']} · exp {exp_str}")
+        tg_send(chat_id, "\n".join(lines))
+        return
+
+    if low in ("/generatekey", "/generate"):
+        TG_STATE[chat_id] = {"step": "password", "data": {}}
+        tg_send(chat_id,
+            "🔐 <b>Step 1/2 · Admin Password</b>\n\n"
+            "Send your <b>admin password</b> to authorise key generation:")
+        return
+
+    # ---- Conversational flow ----
+    state = TG_STATE.get(chat_id)
+    if not state:
+        tg_send(chat_id, "Unknown command. Send /help")
+        return
+
+    if state["step"] == "password":
+        if text != ADMIN_PASS:
+            TG_STATE.pop(chat_id, None)
+            tg_send(chat_id, "❌ <b>Wrong password.</b>\nStart again with /generatekey")
+            return
+        state["step"] = "name"
+        tg_send(chat_id,
+            "✅ <b>Password accepted.</b>\n\n"
+            "📝 <b>Step 2/2 · Username / Label</b>\n\n"
+            "Send a <b>name</b> for this key (e.g. customer name):")
+        return
+
+    if state["step"] == "name":
+        name = (text[:60] or "telegram-key").strip()
+        key = "FT-" + secrets.token_hex(10).upper()
+        expires_at = iso(now_utc() + timedelta(days=30))
+        db_write(
+            "INSERT INTO api_keys(key,name,by_name,tools,created_at,expires_at,req_limit,req_count,status,price,note) "
+            "VALUES (?,?,?,?,?,?,?,0,'active',?,?)",
+            (key, name, "", "all", iso(now_utc()), expires_at, 0, 0.0, "via Telegram bot")
+        )
+        TG_STATE.pop(chat_id, None)
+
+        api_base = _public_base() + "/api"
+        exp_str = parse_iso(expires_at).strftime("%Y-%m-%d %H:%M UTC")
+
+        reply = (
+            "✅ <b>Key Generated Successfully!</b>\n\n"
+            "🔑 <b>API Key:</b>\n"
+            f"<code>{key}</code>\n\n"
+            "👤 <b>Username / Label:</b>\n"
+            f"<code>{name}</code>\n\n"
+            "🌐 <b>API Base URL:</b>\n"
+            f"<code>{api_base}</code>\n\n"
+            f"📅 <b>Expires:</b> {exp_str} (30 days)\n"
+            "🔧 <b>Tools:</b> All\n"
+            "♾ <b>Request limit:</b> Unlimited\n\n"
+            "<i>Tap any code block above to copy it instantly.</i>"
+        )
+        tg_send(chat_id, reply)
+        return
+
+@app.route("/telegram/webhook", methods=["POST"])
+def telegram_webhook():
+    if TELEGRAM_WEBHOOK_SECRET:
+        if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != TELEGRAM_WEBHOOK_SECRET:
+            return ("Unauthorized", 401)
+    update = request.get_json(silent=True) or {}
+    try: tg_handle_update(update)
+    except Exception: pass
+    return ("ok", 200)
+
 # ----------------------------- PROXY API -------------------------
 @app.route("/api/<tool_id>", methods=["GET"])
 def proxy(tool_id):
@@ -247,8 +361,7 @@ def proxy(tool_id):
         if not v: return jsonify(ok=False, error=f"Missing parameter '{p}'"), 400
         params[p] = v
 
-    payload = dict(params)
-    payload["key"] = UPSTREAM_KEY
+    payload = dict(params); payload["key"] = UPSTREAM_KEY
 
     try:
         up = requests.get(f"{UPSTREAM_BASE}/{t['path']}", params=payload, timeout=45)
@@ -271,8 +384,7 @@ def proxy(tool_id):
                          (iso(now_utc()), row["id"]))
                 log_request(user_key, row["name"], tool_id, str(params), "OK")
                 return jsonify(data), up.status_code
-        except Exception:
-            pass
+        except Exception: pass
 
     db_write("UPDATE api_keys SET req_count = req_count + 1, last_used = ? WHERE id = ?",
              (iso(now_utc()), row["id"]))
@@ -281,12 +393,12 @@ def proxy(tool_id):
 
 # ----------------------------- ROUTES ----------------------------
 @app.route("/")
-def root():
-    return redirect("/admin")
+def root(): return redirect("/admin")
 
 @app.route("/health")
 def health():
-    return jsonify(ok=True, brand=BRAND, time=iso(now_utc()), db=DB_PATH)
+    return jsonify(ok=True, brand=BRAND, time=iso(now_utc()), db=DB_PATH,
+                   telegram=bool(TELEGRAM_BOT_TOKEN))
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
@@ -295,8 +407,7 @@ def admin_login():
         u = (data.get("username") or "").strip()
         p = (data.get("password") or "").strip()
         if u == ADMIN_USER and p == ADMIN_PASS:
-            session["admin"] = True
-            session["admin_user"] = u
+            session["admin"] = True; session["admin_user"] = u
             return redirect("/admin")
         return Response(LOGIN_HTML.replace("__ERR__", "Invalid username or password"),
                         401, content_type="text/html")
@@ -304,19 +415,16 @@ def admin_login():
 
 @app.route("/admin/logout")
 def admin_logout():
-    session.clear()
-    return redirect("/admin/login")
+    session.clear(); return redirect("/admin/login")
 
 @app.route("/admin")
 @admin_required
-def admin_home():
-    return Response(DASH_HTML, content_type="text/html")
+def admin_home(): return Response(DASH_HTML, content_type="text/html")
 
 # ----------------------------- ADMIN API -------------------------
 @app.route("/admin/api/tools")
 @admin_required
-def api_tools():
-    return jsonify(ok=True, tools=TOOLS)
+def api_tools(): return jsonify(ok=True, tools=TOOLS)
 
 @app.route("/admin/api/stats")
 @admin_required
@@ -326,7 +434,6 @@ def api_stats():
     active_keys = sum(1 for k in keys if k["status"] == "active" and not k["expired"])
     suspended = sum(1 for k in keys if k["status"] != "active")
     expired = sum(1 for k in keys if k["expired"])
-
     total_requests = sum(int(k["req_count"] or 0) for k in keys)
     today = now_utc().date().isoformat()
     today_requests = db_one("SELECT COUNT(*) c FROM logs WHERE substr(ts,1,10)=?", (today,))["c"]
@@ -339,20 +446,17 @@ def api_stats():
     for k in keys:
         cd = parse_iso(k["created_at"])
         if cd and cd >= start: rev_range += float(k["price"] or 0)
-
     rev_total = sum(float(k["price"] or 0) for k in keys)
 
     series = []
     base = now_utc().date()
     for i in range(13, -1, -1):
         d = base - timedelta(days=i)
-        amt = 0.0
-        cnt = 0
+        amt = 0.0; cnt = 0
         for k in keys:
             cd = parse_iso(k["created_at"])
             if cd and cd.date() == d:
-                amt += float(k["price"] or 0)
-                cnt += 1
+                amt += float(k["price"] or 0); cnt += 1
         series.append({"date": d.isoformat(), "amount": round(amt, 2), "count": cnt})
 
     return jsonify(ok=True, total_keys=total_keys, active_keys=active_keys,
@@ -388,8 +492,7 @@ def api_keys_create():
     by_name = (d.get("by_name") or "").strip()[:60]
 
     tools = d.get("tools") or ["all"]
-    if isinstance(tools, str):
-        tools = [x.strip() for x in tools.split(",") if x.strip()]
+    if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
     tools = [t for t in tools if t in TOOL_MAP]
     tools_str = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
 
@@ -419,8 +522,7 @@ def api_keys_edit(kid):
     if "by_name" in d: updates["by_name"] = (d.get("by_name") or "").strip()[:60]
     if "tools" in d:
         tools = d.get("tools") or ["all"]
-        if isinstance(tools, str):
-            tools = [x.strip() for x in tools.split(",") if x.strip()]
+        if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
         tools = [t for t in tools if t in TOOL_MAP]
         updates["tools"] = "all" if (not tools or "all" in tools) else ",".join(sorted(set(tools)))
     if "req_limit" in d:
@@ -438,7 +540,6 @@ def api_keys_edit(kid):
     if updates:
         sets = ", ".join(f"{k}=?" for k in updates)
         db_write(f"UPDATE api_keys SET {sets} WHERE id=?", tuple(updates.values()) + (kid,))
-
     return jsonify(ok=True, key=key_state(db_one("SELECT * FROM api_keys WHERE id = ?", (kid,))))
 
 @app.route("/admin/api/keys/<int:kid>/reset", methods=["POST"])
@@ -463,15 +564,44 @@ def api_logs():
     try: limit = min(1000, max(1, int(request.args.get("limit") or 200)))
     except Exception: limit = 200
 
-    sql = "SELECT * FROM logs WHERE 1=1"
-    args = []
+    sql = "SELECT * FROM logs WHERE 1=1"; args = []
     if key: sql += " AND key = ?"; args.append(key)
     if q:
         sql += " AND (key LIKE ? OR name LIKE ? OR tool LIKE ? OR query LIKE ?)"
         like = f"%{q}%"; args += [like, like, like, like]
-    sql += " ORDER BY id DESC LIMIT ?"
-    args.append(limit)
+    sql += " ORDER BY id DESC LIMIT ?"; args.append(limit)
     return jsonify(ok=True, logs=db_fetch(sql, tuple(args)))
+
+# ---------- TELEGRAM ADMIN API ----------
+@app.route("/admin/api/telegram/status")
+@admin_required
+def telegram_status():
+    if not TELEGRAM_BOT_TOKEN:
+        return jsonify(ok=True, configured=False,
+                       message="TELEGRAM_BOT_TOKEN not set in Railway Variables")
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo", timeout=15)
+        info = r.json()
+        return jsonify(ok=True, configured=True, info=info)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+@app.route("/admin/api/telegram/set-webhook", methods=["POST"])
+@admin_required
+def telegram_set_webhook():
+    if not TELEGRAM_BOT_TOKEN:
+        return jsonify(ok=False, error="TELEGRAM_BOT_TOKEN not set"), 400
+    base = _public_base()
+    webhook_url = base + "/telegram/webhook"
+    payload = {"url": webhook_url, "allowed_updates": ["message"]}
+    if TELEGRAM_WEBHOOK_SECRET:
+        payload["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook",
+                          json=payload, timeout=15)
+        return jsonify(r.json())
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
 
 # ============================================================
 #                         LOGIN PAGE
@@ -506,8 +636,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 @keyframes float{0%,100%{transform:rotateX(4deg) translateY(0)}50%{transform:rotateX(4deg) translateY(-8px)}}
 .logo{width:64px;height:64px;margin:0 auto 16px;border-radius:18px;display:grid;place-items:center;
   font-weight:900;font-size:22px;letter-spacing:1px;color:#02121a;
-  background:linear-gradient(135deg,#00e5ff,#8b5cf6);
-  box-shadow:0 0 34px rgba(0,229,255,.65)}
+  background:linear-gradient(135deg,#00e5ff,#8b5cf6);box-shadow:0 0 34px rgba(0,229,255,.65)}
 h1{font-size:20px;margin:0;text-align:center;letter-spacing:3px;font-weight:800}
 .sub{text-align:center;color:var(--mut);font-size:11px;letter-spacing:2.6px;margin:6px 0 26px}
 label{display:block;font-size:11px;letter-spacing:1.6px;color:var(--mut);margin:14px 0 6px;text-transform:uppercase}
@@ -572,8 +701,7 @@ function startHacking(e) {
       const p = document.createElement('div');
       p.textContent = lines[i];
       if (i === lines.length - 1) p.innerHTML += ' <span class="blink">_</span>';
-      textDiv.appendChild(p);
-      i++;
+      textDiv.appendChild(p); i++;
     } else {
       clearInterval(interval);
       setTimeout(() => { document.getElementById('loginForm').submit(); }, 500);
@@ -735,6 +863,36 @@ tr:hover td{background:rgba(0,229,255,.04)}
   border:1px solid rgba(0,229,255,.1);margin-bottom:9px}
 .doc-item .u{font-family:ui-monospace,Menlo,monospace;font-size:11.6px;color:#8ce8ff;word-break:break-all}
 .doc-item .d{font-size:10.4px;color:var(--mut);margin-top:4px;letter-spacing:.6px}
+
+/* KEBAB MENU (3-dot) */
+.menu3-wrap{position:relative}
+.icon-btn-3dot{width:40px;height:40px;border-radius:11px;border:1px solid var(--line);
+  background:rgba(0,229,255,.07);color:var(--cyan);font-size:20px;cursor:pointer;
+  display:grid;place-items:center;transition:.18s;font-weight:900;line-height:1}
+.icon-btn-3dot:hover{background:rgba(0,229,255,.18);transform:rotate(90deg)}
+.menu3{position:absolute;top:calc(100% + 10px);right:0;min-width:220px;
+  background:linear-gradient(160deg,rgba(13,24,42,.98),rgba(5,10,20,.99));
+  border:1px solid rgba(0,229,255,.3);border-radius:14px;padding:8px;
+  box-shadow:0 25px 55px -20px rgba(0,229,255,.9);display:none;z-index:120}
+.menu3.show{display:block;animation:menuPop .2s ease}
+@keyframes menuPop{from{opacity:0;transform:scale(.95) translateY(-6px)}to{opacity:1;transform:none}}
+.menu3 .mi{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;
+  border:0;background:transparent;color:var(--txt);text-align:left;font-size:12.5px;
+  font-weight:600;cursor:pointer;border-radius:9px;font-family:inherit;
+  text-decoration:none;letter-spacing:.3px;transition:.15s}
+.menu3 .mi:hover{background:rgba(0,229,255,.12);color:#fff}
+.menu3 .mi .ic{width:22px;text-align:center;font-size:14px}
+.menu3 .sep{height:1px;background:rgba(0,229,255,.13);margin:6px 4px}
+.menu3 .mi.danger{color:#ffb3c1}
+.menu3 .mi.danger:hover{background:rgba(255,77,109,.15);color:#ff8ea0}
+
+/* Small copy button inline in doc */
+.copy-inline{padding:5px 9px;border-radius:7px;border:1px solid rgba(0,229,255,.35);
+  background:rgba(0,229,255,.09);color:#8ce8ff;font-size:10px;font-weight:800;
+  letter-spacing:.8px;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap}
+.copy-inline:hover{background:rgba(0,229,255,.22);color:#fff}
+.copy-inline.copied{background:rgba(34,224,138,.22);border-color:rgba(34,224,138,.5);color:#a8f7d2}
+
 @media(max-width:1100px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:860px){
   .sidebar{position:fixed;left:0;top:0;height:100vh;transform:translateX(-105%);
@@ -748,6 +906,7 @@ tr:hover td{background:rgba(0,229,255,.04)}
   .top-brand{font-size:11px;letter-spacing:1.4px}
   .card .big{font-size:24px}
   .search{max-width:100%;width:100%}
+  .chip{display:none}
 }
 </style>
 </head>
@@ -779,6 +938,17 @@ tr:hover td{background:rgba(0,229,255,.04)}
       <div class="top-brand">CONTROL CENTER<small>SHAYAN_EXPLORER · OSINT API</small></div>
       <div class="top-spacer"></div>
       <div class="chip">● SYSTEM ONLINE</div>
+      <div class="menu3-wrap">
+        <button class="icon-btn-3dot" id="menu3Btn" aria-label="more">⋮</button>
+        <div class="menu3" id="menu3">
+          <button class="mi" onclick="refreshCurrent()"><span class="ic">🔄</span> Refresh</button>
+          <button class="mi" onclick="copyAdminUrl()"><span class="ic">🔗</span> Copy Admin URL</button>
+          <button class="mi" onclick="showView('docs');closeMenu3()"><span class="ic">❰❱</span> API Docs</button>
+          <button class="mi" onclick="openTelegramSetup();closeMenu3()"><span class="ic">🤖</span> Telegram Bot</button>
+          <div class="sep"></div>
+          <a class="mi danger" href="/admin/logout"><span class="ic">🚪</span> Logout</a>
+        </div>
+      </div>
     </header>
     <div class="content">
       <section class="view active" id="view-overview">
@@ -803,6 +973,7 @@ tr:hover td{background:rgba(0,229,255,.04)}
             <button class="btn ghost" onclick="showView('keys')">MANAGE KEYS</button>
             <button class="btn ghost" onclick="showView('logs')">VIEW LOGS</button>
             <button class="btn ghost" onclick="showView('docs')">API DOCS</button>
+            <button class="btn ghost" onclick="openTelegramSetup()">🤖 TELEGRAM BOT</button>
           </div>
         </div>
       </section>
@@ -865,7 +1036,11 @@ tr:hover td{background:rgba(0,229,255,.04)}
       </section>
       <section class="view" id="view-docs">
         <div class="panel" style="margin-top:0">
-          <div class="panel-head"><h2>API ENDPOINTS</h2></div>
+          <div class="panel-head">
+            <h2>API ENDPOINTS</h2>
+            <div class="spacer"></div>
+            <button class="btn ghost sm" onclick="copyBaseUrl()">COPY BASE URL</button>
+          </div>
           <p style="font-size:11.5px;color:var(--mut);margin:0 0 14px">
             Base URL: <span class="mono" id="baseUrl"></span> · Pass your key as <b>key</b> query parameter.
           </p>
@@ -875,6 +1050,8 @@ tr:hover td{background:rgba(0,229,255,.04)}
     </div>
   </div>
 </div>
+
+<!-- ============ KEY MODAL ============ -->
 <div class="modal" id="keyModal">
   <div class="modal-box">
     <h2 id="modalTitle">GENERATE API KEY</h2>
@@ -889,14 +1066,8 @@ tr:hover td{background:rgba(0,229,255,.04)}
     <label class="fl">Developer Name / "By" (Optional)</label>
     <input id="kByName" placeholder="e.g. SHAYAN_EXPLORER (Leave blank for default)">
     <div class="row2">
-      <div>
-        <label class="fl">Request Limit (0 = unlimited)</label>
-        <input id="kLimit" type="number" min="0" value="0">
-      </div>
-      <div>
-        <label class="fl">Price (₹) — revenue</label>
-        <input id="kPrice" type="number" min="0" step="1" value="0">
-      </div>
+      <div><label class="fl">Request Limit (0 = unlimited)</label><input id="kLimit" type="number" min="0" value="0"></div>
+      <div><label class="fl">Price (₹) — revenue</label><input id="kPrice" type="number" min="0" step="1" value="0"></div>
     </div>
     <label class="fl">Expiry Date &amp; Time (required)</label>
     <input id="kExpiry" type="datetime-local">
@@ -920,16 +1091,45 @@ tr:hover td{background:rgba(0,229,255,.04)}
     </div>
   </div>
 </div>
+
+<!-- ============ TELEGRAM MODAL ============ -->
+<div class="modal" id="tgModal">
+  <div class="modal-box">
+    <h2>🤖 TELEGRAM BOT SETUP</h2>
+    <p class="hint">Generate API keys from Telegram with /generatekey</p>
+    <div id="tgStatus" style="padding:14px;border-radius:12px;background:rgba(2,8,16,.6);border:1px solid rgba(0,229,255,.15);margin-bottom:14px;font-size:12px;min-height:60px">Checking...</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn" style="flex:1;min-width:180px" onclick="setupTelegramWebhook()">INSTALL / REFRESH WEBHOOK</button>
+      <button class="btn ghost" onclick="refreshTelegramStatus()">REFRESH</button>
+      <button class="btn ghost" onclick="closeModal('tgModal')">CLOSE</button>
+    </div>
+    <div style="margin-top:18px;padding:14px;border-radius:12px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.15);font-size:11px;line-height:1.8;color:var(--mut)">
+      <b style="color:var(--cyan)">📋 Setup steps:</b><br>
+      1. Create a bot with <b>@BotFather</b> → copy token<br>
+      2. Get your chat ID from <b>@userinfobot</b><br>
+      3. Add these Railway Variables → redeploy:<br>
+      &nbsp;&nbsp;• <code>TELEGRAM_BOT_TOKEN</code><br>
+      &nbsp;&nbsp;• <code>TELEGRAM_ADMIN_CHAT_ID</code><br>
+      &nbsp;&nbsp;• <code>PUBLIC_BASE_URL</code> (e.g. https://your-domain.up.railway.app)<br>
+      4. Click <b>INSTALL / REFRESH WEBHOOK</b> above<br>
+      5. Open your bot → send <code>/generatekey</code><br><br>
+      <b style="color:var(--cyan)">Bot commands:</b><br>
+      <code>/generatekey</code> — create a key (asks password → name)<br>
+      <code>/listkeys</code> — show last 10 keys<br>
+      <code>/cancel</code> — cancel current flow
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let TOOLS = [];
-let EDIT_ID = null;
+let TOOLS = []; let EDIT_ID = null;
+
 function toast(msg, type='ok'){
   const d = document.createElement('div');
-  d.className = 'toast ' + type;
-  d.textContent = msg;
+  d.className = 'toast ' + type; d.textContent = msg;
   $('#toasts').appendChild(d);
   setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateX(30px)'; d.style.transition='.3s'; }, 2600);
   setTimeout(()=> d.remove(), 3000);
@@ -948,6 +1148,44 @@ async function jsend(url, method, body){
   if(r.status === 401){ location.href = '/admin/login'; return null; }
   try { return await r.json(); } catch(e){ return {ok:false, error:'Bad response'}; }
 }
+
+/* ---------- COPY HELPERS (one-click) ---------- */
+async function copyText(text){
+  try { await navigator.clipboard.writeText(text); toast('Copied ✅','ok'); return true; }
+  catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('Copied ✅','ok'); }
+    catch(_){ toast('Copy failed','err'); }
+    document.body.removeChild(ta);
+  }
+}
+function copyAdminUrl(){ copyText(location.origin + '/admin'); }
+function copyBaseUrl(){ copyText(location.origin + '/api'); }
+
+/* ---------- 3-DOT MENU ---------- */
+const menu3 = $('#menu3'), menu3Btn = $('#menu3Btn');
+function closeMenu3(){ menu3.classList.remove('show'); }
+menu3Btn.addEventListener('click', e => { e.stopPropagation(); menu3.classList.toggle('show'); });
+document.addEventListener('click', e => {
+  if(!menu3.contains(e.target) && e.target !== menu3Btn) closeMenu3();
+});
+
+function refreshCurrent(){
+  const active = document.querySelector('.view.active');
+  if(!active){ loadOverview(); closeMenu3(); return; }
+  const id = active.id.replace('view-','');
+  if(id === 'overview') loadOverview();
+  else if(id === 'keys') loadKeys();
+  else if(id === 'logs') loadLogs();
+  else if(id === 'revenue') loadRevenue();
+  else if(id === 'docs') renderDocs();
+  toast('Refreshed', 'ok');
+  closeMenu3();
+}
+
+/* ---------- SIDEBAR ---------- */
 const sidebar = $('#sidebar'), overlay = $('#overlay');
 function openMenu(){ sidebar.classList.add('open'); overlay.classList.add('show'); }
 function closeMenu(){ sidebar.classList.remove('open'); overlay.classList.remove('show'); }
@@ -956,32 +1194,34 @@ $('#menuBtn').addEventListener('click', ()=>{
 });
 overlay.addEventListener('click', closeMenu);
 $$('.nav-item').forEach(b => b.addEventListener('click', ()=> showView(b.dataset.view)));
+
 function showView(name){
   $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-'+name));
   $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === name));
   closeMenu();
   if(name === 'overview') loadOverview();
-  if(name === 'keys')     loadKeys();
-  if(name === 'logs')     loadLogs();
-  if(name === 'revenue')  loadRevenue();
-  if(name === 'docs')     renderDocs();
+  if(name === 'keys') loadKeys();
+  if(name === 'logs') loadLogs();
+  if(name === 'revenue') loadRevenue();
+  if(name === 'docs') renderDocs();
 }
+
+/* ---------- OVERVIEW ---------- */
 async function loadOverview(){
   const d = await jget('/admin/api/stats?range=30d');
   if(!d || !d.ok) return;
-  $('#s-keys').textContent   = d.total_keys;
+  $('#s-keys').textContent = d.total_keys;
   $('#s-keys-sub').textContent = d.suspended_keys + ' suspended · ' + d.expired_keys + ' expired';
   $('#s-active').textContent = d.active_keys;
   $('#s-active-sub').textContent = 'currently usable';
-  $('#s-req').textContent    = d.total_requests;
+  $('#s-req').textContent = d.total_requests;
   $('#s-req-sub').textContent = d.today_requests + ' today';
-  $('#s-rev').textContent    = '₹' + d.revenue_total;
+  $('#s-rev').textContent = '₹' + d.revenue_total;
   $('#s-rev-sub').textContent = '₹' + d.revenue_range + ' in last 30 days';
   drawChart('#revChart', d.series);
 }
 function drawChart(sel, series){
-  const el = $(sel);
-  if(!el) return;
+  const el = $(sel); if(!el) return;
   if(!series || !series.length){ el.innerHTML = '<div class="empty">No data</div>'; return; }
   const max = Math.max(1, ...series.map(s => s.amount));
   el.innerHTML = series.map(s => {
@@ -990,6 +1230,8 @@ function drawChart(sel, series){
     return '<div class="bar" style="height:'+h+'px" title="'+esc(s.date)+' · ₹'+s.amount+' · '+s.count+' keys"><span>'+esc(label)+'</span></div>';
   }).join('');
 }
+
+/* ---------- KEYS ---------- */
 async function loadKeys(){
   const q = $('#keySearch').value.trim();
   const d = await jget('/admin/api/keys?q=' + encodeURIComponent(q));
@@ -1030,11 +1272,7 @@ $('#keysBody').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-act]');
   if(!btn) return;
   const act = btn.dataset.act;
-  if(act === 'copy'){
-    try { await navigator.clipboard.writeText(btn.dataset.key); toast('Key copied', 'ok'); }
-    catch(err){ toast('Copy failed', 'err'); }
-    return;
-  }
+  if(act === 'copy'){ copyText(btn.dataset.key); return; }
   if(act === 'edit'){
     const d = await jget('/admin/api/keys');
     const k = d.keys.find(x => String(x.id) === btn.dataset.id);
@@ -1060,19 +1298,20 @@ $('#keysBody').addEventListener('click', async (e) => {
     loadKeys(); return;
   }
 });
+
+/* ---------- MODAL ---------- */
 async function openKeyModal(k){
   EDIT_ID = k ? k.id : null;
   $('#modalTitle').textContent = k ? 'EDIT API KEY' : 'GENERATE API KEY';
   $('#saveKeyBtn').textContent = k ? 'SAVE CHANGES' : 'GENERATE KEY';
-  $('#kKey').value    = k ? k.key : '';
+  $('#kKey').value = k ? k.key : '';
   $('#kKey').disabled = !!k;
-  $('#kName').value   = k ? (k.name || '') : '';
+  $('#kName').value = k ? (k.name || '') : '';
   $('#kByName').value = k ? (k.by_name || '') : '';
-  $('#kLimit').value  = k ? (k.req_limit || 0) : 0;
-  $('#kPrice').value  = k ? (k.price || 0) : 0;
-  $('#kNote').value   = k ? (k.note || '') : '';
-  if(k && k.expires_ms) setExpiryAt(k.expires_ms);
-  else setExpiry(86400000);
+  $('#kLimit').value = k ? (k.req_limit || 0) : 0;
+  $('#kPrice').value = k ? (k.price || 0) : 0;
+  $('#kNote').value = k ? (k.note || '') : '';
+  if(k && k.expires_ms) setExpiryAt(k.expires_ms); else setExpiry(86400000);
   await renderToolGrid(k ? (k.tools || 'all').split(',') : ['all']);
   $('#keyModal').classList.add('show');
   document.body.style.overflow = 'hidden';
@@ -1135,32 +1374,22 @@ async function saveKey(){
     note: $('#kNote').value.trim()
   };
   let r;
-  if(EDIT_ID){
-    r = await jsend('/admin/api/keys/' + EDIT_ID, 'PATCH', payload);
-  } else {
-    payload.key = $('#kKey').value.trim();
-    r = await jsend('/admin/api/keys', 'POST', payload);
-  }
+  if(EDIT_ID) r = await jsend('/admin/api/keys/' + EDIT_ID, 'PATCH', payload);
+  else { payload.key = $('#kKey').value.trim(); r = await jsend('/admin/api/keys', 'POST', payload); }
   if(r && r.ok){
     toast(EDIT_ID ? 'Key updated' : 'Key generated successfully', 'ok');
-    closeModal('keyModal');
-    EDIT_ID = null;
-    showView('keys');
-    loadKeys();
-    loadOverview();
-  } else {
-    toast((r && r.error) || 'Failed', 'err');
-  }
+    closeModal('keyModal'); EDIT_ID = null;
+    showView('keys'); loadKeys(); loadOverview();
+  } else toast((r && r.error) || 'Failed', 'err');
 }
+
+/* ---------- LOGS ---------- */
 async function loadLogs(){
   const q = $('#logSearch').value.trim();
   const d = await jget('/admin/api/logs?limit=300&q=' + encodeURIComponent(q));
   if(!d || !d.ok) return;
   const tb = $('#logsBody');
-  if(!d.logs.length){
-    tb.innerHTML = '<tr><td colspan="7" class="empty">No logs yet.</td></tr>';
-    return;
-  }
+  if(!d.logs.length){ tb.innerHTML = '<tr><td colspan="7" class="empty">No logs yet.</td></tr>'; return; }
   tb.innerHTML = d.logs.map(l =>
     '<tr>' +
       '<td style="font-size:10.6px;white-space:nowrap">'+esc((l.ts||'').replace('T',' ').replace('+00:00',''))+'</td>' +
@@ -1173,6 +1402,8 @@ async function loadLogs(){
     '</tr>'
   ).join('');
 }
+
+/* ---------- REVENUE ---------- */
 async function loadRevenue(){
   const rng = $('#revRange').value;
   const d = await jget('/admin/api/stats?range=' + rng);
@@ -1182,20 +1413,77 @@ async function loadRevenue(){
   $('#r-count').textContent = d.total_keys;
   drawChart('#revChart2', d.series);
 }
+
+/* ---------- DOCS (with one-click copy) ---------- */
 async function renderDocs(){
   if(!TOOLS.length){
     const d = await jget('/admin/api/tools');
     TOOLS = (d && d.tools) ? d.tools : [];
   }
-  $('#baseUrl').textContent = location.origin + '/api';
+  const base = location.origin + '/api';
+  $('#baseUrl').textContent = base;
   $('#docsList').innerHTML = TOOLS.map(t => {
     const qs = ['key=YOUR_KEY'].concat(t.params.map(p => p + '=VALUE')).join('&');
+    const fullUrl = base + '/' + t.id + '?' + qs;
     return '<div class="doc-item">' +
-      '<div class="u">GET ' + esc(location.origin) + '/api/' + esc(t.id) + '?' + esc(qs) + '</div>' +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+        '<div class="u" style="flex:1;min-width:200px">GET ' + esc(fullUrl) + '</div>' +
+        '<button class="copy-inline" data-copy="' + esc(fullUrl) + '">📋 COPY</button>' +
+      '</div>' +
       '<div class="d">' + esc(t.label) + ' · params: ' + esc(t.params.join(', ')) + '</div>' +
     '</div>';
   }).join('');
+
+  document.querySelectorAll('.copy-inline').forEach(btn => {
+    btn.onclick = async () => {
+      await copyText(btn.dataset.copy);
+      const orig = btn.textContent;
+      btn.textContent = '✅ COPIED';
+      btn.classList.add('copied');
+      setTimeout(()=>{ btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+    };
+  });
 }
+
+/* ---------- TELEGRAM MODAL ---------- */
+function openTelegramSetup(){
+  $('#tgModal').classList.add('show');
+  document.body.style.overflow = 'hidden';
+  refreshTelegramStatus();
+}
+async function refreshTelegramStatus(){
+  const el = $('#tgStatus');
+  el.innerHTML = '⏳ Checking...';
+  const d = await jget('/admin/api/telegram/status');
+  if(!d){ el.innerHTML = '<span style="color:#ff4d6d">Failed to check status</span>'; return; }
+  if(!d.configured){
+    el.innerHTML = '<div class="err">TELEGRAM_BOT_TOKEN not set.<br>Add it in Railway → Variables → TELEGRAM_BOT_TOKEN then redeploy.</div>';
+    return;
+  }
+  const info = (d.info && d.info.result) || {};
+  const url = info.url || '(none)';
+  const pending = info.pending_update_count || 0;
+  const lastErr = info.last_error_message;
+  const okMark = url && url.indexOf('/telegram/webhook') >= 0 ? '🟢' : '🟡';
+  el.innerHTML =
+    '<div style="font-size:11.5px;line-height:1.9">' +
+      '<div><b>Status:</b> ' + okMark + ' ' + (url ? 'Webhook installed' : 'No webhook') + '</div>' +
+      '<div><b>Webhook URL:</b> <span class="mono" style="font-size:10.5px">' + esc(url) + '</span></div>' +
+      '<div><b>Pending updates:</b> ' + pending + '</div>' +
+      (lastErr ? '<div style="color:#ffb3c1"><b>Last error:</b> ' + esc(lastErr) + '</div>' : '') +
+    '</div>';
+}
+async function setupTelegramWebhook(){
+  const r = await jsend('/admin/api/telegram/set-webhook', 'POST', {});
+  if(r && (r.ok || (r.result && r.result.url))){
+    toast('Webhook installed ✅','ok');
+    refreshTelegramStatus();
+  } else {
+    toast((r && r.error) || (r && r.description) || 'Failed','err');
+  }
+}
+
+/* ---------- INIT ---------- */
 (async function init(){
   const d = await jget('/admin/api/tools');
   TOOLS = (d && d.tools) ? d.tools : [];
@@ -1215,5 +1503,6 @@ if __name__ == "__main__":
     print(f"  DB     : {DB_PATH}")
     print("  URL    : http://127.0.0.1:5000")
     print(f"  Admin  : {ADMIN_USER} / {ADMIN_PASS}")
+    print(f"  Telegram: {'configured' if TELEGRAM_BOT_TOKEN else 'NOT configured'}")
     print("=" * 62)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
