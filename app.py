@@ -1,17 +1,17 @@
 # ============================================================
-#  SHAYAN_EXPLORER · OSINT API CONTROL CENTER
-#  Developer: SHAYAN_EXPLORER
+#  SHAYAN_EXPLORER · OSINT API CONTROL CENTER  (v3)
+#  Features: Member logins via Telegram · Snowfall · Strict Auth
 # ============================================================
 
 import os
 import sqlite3
 import secrets
-import threading
+import requests
 from datetime import datetime, timezone, timedelta
 from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from flask import Flask, request, jsonify, session, redirect, Response
-import requests
 
 # ----------------------------- CONFIG -----------------------------
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,32 +25,20 @@ def _resolve_db_path():
 
 DB_PATH = _resolve_db_path()
 try:
-    _d = os.path.dirname(DB_PATH)
-    if _d: os.makedirs(_d, exist_ok=True)
-except Exception:
-    pass
+    d = os.path.dirname(DB_PATH)
+    if d: os.makedirs(d, exist_ok=True)
+except Exception: pass
 
-ADMIN_USER   = os.environ.get("ADMIN_USER", "vernex")
-ADMIN_PASS   = os.environ.get("ADMIN_PASS", "vernex@16vx")
-SECRET_KEY   = os.environ.get("SECRET_KEY", "shayan-explorer-super-secret-key")
-
+ADMIN_USER = os.environ.get("ADMIN_USER", "vernex")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "vernex@16vx")
+SECRET_KEY = os.environ.get("SECRET_KEY", "shayan-explorer-super-secret-key")
 UPSTREAM_BASE = os.environ.get("UPSTREAM_BASE", "https://ft-osint-api.duckdns.org/api").rstrip("/")
 UPSTREAM_KEY  = os.environ.get("UPSTREAM_KEY", "explorer16")
 BRAND = os.environ.get("BRAND", "SHAYAN_EXPLORER")
 
-# Telegram bot settings
-TELEGRAM_BOT_TOKEN        = os.environ.get("TELEGRAM_BOT_TOKEN", "8378722740:AAH_isHoArOtcXGYrS247w1Em_cmGyzvP6k").strip()
-TELEGRAM_ADMIN_CHAT_ID    = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "8505747325").strip()
-TELEGRAM_WEBHOOK_SECRET   = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
-PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", "apppy-production-94474a59.up.railway.app").strip().rstrip("/")
-
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    JSON_SORT_KEYS=False,
-)
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", JSON_SORT_KEYS=False)
 
 # ----------------------------- TOOLS ------------------------------
 TOOLS = [
@@ -93,10 +81,8 @@ def _conn():
 
 def db_fetch(sql, args=()):
     c = _conn()
-    try:
-        return [dict(r) for r in c.execute(sql, args).fetchall()]
-    finally:
-        c.close()
+    try: return [dict(r) for r in c.execute(sql, args).fetchall()]
+    finally: c.close()
 
 def db_one(sql, args=()):
     rows = db_fetch(sql, args)
@@ -108,8 +94,7 @@ def db_write(sql, args=()):
         cur = c.execute(sql, args)
         c.commit()
         return cur.lastrowid
-    finally:
-        c.close()
+    finally: c.close()
 
 def init_db():
     c = _conn()
@@ -136,14 +121,27 @@ def init_db():
             key TEXT, name TEXT, tool TEXT, query TEXT,
             ip TEXT, status TEXT, ts TEXT
         );
+        CREATE TABLE IF NOT EXISTS members(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            status TEXT DEFAULT 'active',
+            created_by TEXT DEFAULT 'telegram',
+            last_login TEXT
+        );
+        CREATE TABLE IF NOT EXISTS settings(
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
         CREATE INDEX IF NOT EXISTS idx_logs_key ON logs(key);
         CREATE INDEX IF NOT EXISTS idx_logs_ts  ON logs(ts);
         """)
         try: c.execute("ALTER TABLE api_keys ADD COLUMN by_name TEXT DEFAULT ''")
         except sqlite3.OperationalError: pass
         c.commit()
-    finally:
-        c.close()
+    finally: c.close()
 
 # ----------------------------- TIME ------------------------------
 def now_utc(): return datetime.now(timezone.utc)
@@ -165,6 +163,20 @@ def ms_to_iso(ms):
     try: return iso(datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc))
     except Exception: return None
 
+# ----------------------------- SETTINGS --------------------------
+def get_setting(key, default=''):
+    row = db_one("SELECT value FROM settings WHERE key = ?", (key,))
+    return row["value"] if row else default
+
+def set_setting(key, value):
+    db_write("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+             (key, value if value is not None else ''))
+
+def get_bot_token():   return get_setting("tg_bot_token") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+def get_bot_chat():    return get_setting("tg_chat_id") or os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "")
+def get_bot_secret():  return get_setting("tg_webhook_secret") or os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+def get_public_url():  return get_setting("public_base_url") or os.environ.get("PUBLIC_BASE_URL", "")
+
 # ----------------------------- AUTH ------------------------------
 def admin_required(f):
     @wraps(f)
@@ -173,6 +185,16 @@ def admin_required(f):
             if request.path.startswith("/admin/api/"):
                 return jsonify(ok=False, error="Unauthorized"), 401
             return redirect("/admin/login")
+        return f(*a, **kw)
+    return wrapper
+
+def super_admin_required(f):
+    @wraps(f)
+    def wrapper(*a, **kw):
+        if not session.get("admin"):
+            return jsonify(ok=False, error="Unauthorized"), 401
+        if session.get("role") != "admin":
+            return jsonify(ok=False, error="Admin only"), 403
         return f(*a, **kw)
     return wrapper
 
@@ -202,32 +224,34 @@ def check_key(key, tool_id):
     return row, None
 
 def log_request(key, name, tool, query, status):
-    db_write(
-        "INSERT INTO logs(key,name,tool,query,ip,status,ts) VALUES (?,?,?,?,?,?,?)",
-        (key, name, tool, str(query)[:400],
-         request.headers.get("X-Forwarded-For", request.remote_addr or ""),
-         status, iso(now_utc()))
-    )
+    db_write("INSERT INTO logs(key,name,tool,query,ip,status,ts) VALUES (?,?,?,?,?,?,?)",
+             (key, name, tool, str(query)[:400],
+              request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+              status, iso(now_utc())))
 
 # ============================================================
-#                  TELEGRAM BOT (WEBHOOK MODE)
+#                  TELEGRAM BOT · MEMBER CREATION
 # ============================================================
-TG_STATE = {}   # {chat_id: {"step": "password"|"name", "data": {...}}}
+TG_STATE = {}  # chat_id -> {"step": "password"|"username", "data": {...}}
 
-def _public_base():
-    return (PUBLIC_BASE_URL or request.host_url).rstrip("/")
-
-def tg_api(method, **params):
-    if not TELEGRAM_BOT_TOKEN: return None
+def _tg_api(method, **params):
+    token = get_bot_token()
+    if not token: return None
     try:
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}",
-                          json=params, timeout=15)
+        r = requests.post(f"https://api.telegram.org/bot{token}/{method}", json=params, timeout=15)
         return r.json()
     except Exception:
         return None
 
-def tg_send(chat_id, text, parse_mode="HTML", **kwargs):
-    return tg_api("sendMessage", chat_id=chat_id, text=text, parse_mode=parse_mode, **kwargs)
+def _tg_send(chat_id, text):
+    return _tg_api("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
+
+def _gen_password(n=12):
+    alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    return ''.join(secrets.choice(alphabet) for _ in range(n))
+
+def _public_base():
+    return (get_public_url() or request.host_url).rstrip("/")
 
 def tg_handle_update(update):
     msg = update.get("message") or update.get("edited_message")
@@ -237,106 +261,106 @@ def tg_handle_update(update):
     text = (msg.get("text") or "").strip()
     if not chat_id or not text: return
 
-    # Auth check: if TELEGRAM_ADMIN_CHAT_ID is set, only that chat can use the bot
-    if TELEGRAM_ADMIN_CHAT_ID and str(chat_id) != TELEGRAM_ADMIN_CHAT_ID:
-        tg_send(chat_id, "⛔ <b>Unauthorized.</b>\nThis bot is restricted to the configured admin chat.")
+    # Chat ID guard (if configured)
+    allowed_chat = get_bot_chat().strip()
+    if allowed_chat and str(chat_id) != allowed_chat:
+        _tg_send(chat_id, "⛔ <b>Unauthorized.</b>\nThis bot is restricted to the configured admin chat.")
         return
 
     low = text.lower()
     if "@" in low: low = low.split("@")[0]
 
-    # ---- Commands ----
     if low in ("/start", "/help"):
-        tg_send(chat_id,
-            "<b>SHAYAN_EXPLORER · OSINT Bot</b>\n\n"
+        _tg_send(chat_id,
+            "🤖 <b>SHAYAN_EXPLORER · Member Bot</b>\n\n"
             "<b>Commands:</b>\n"
-            "/generatekey — create a new API key\n"
-            "/listkeys — show last 10 keys\n"
+            "/generatekey — create member login (username + password)\n"
+            "/listmembers — show latest members\n"
             "/cancel — cancel current flow\n"
             "/help — show this help\n\n"
-            "<i>Only the configured admin chat can use this bot.</i>")
+            "<i>Bot creates login credentials for members of your website.</i>")
         return
 
     if low == "/cancel":
         TG_STATE.pop(chat_id, None)
-        tg_send(chat_id, "❌ Cancelled.")
+        _tg_send(chat_id, "❌ Cancelled.")
         return
 
-    if low == "/listkeys":
-        rows = db_fetch("SELECT key,name,status,expires_at FROM api_keys ORDER BY id DESC LIMIT 10")
+    if low == "/listmembers":
+        rows = db_fetch("SELECT username,name,status,created_at FROM members ORDER BY id DESC LIMIT 10")
         if not rows:
-            tg_send(chat_id, "No keys yet. Send /generatekey")
+            _tg_send(chat_id, "No members yet. Send /generatekey")
             return
-        lines = ["<b>Last 10 keys:</b>\n"]
+        lines = ["<b>Last 10 members:</b>\n"]
         for r in rows:
-            exp = parse_iso(r["expires_at"])
-            exp_str = exp.strftime("%Y-%m-%d") if exp else "never"
-            lines.append(f"• <code>{r['key']}</code>\n  {r['name'] or 'unnamed'} · {r['status']} · exp {exp_str}")
-        tg_send(chat_id, "\n".join(lines))
+            lines.append(f"• <code>{r['username']}</code> · {r['name'] or '—'} · {r['status']}")
+        _tg_send(chat_id, "\n".join(lines))
         return
 
     if low in ("/generatekey", "/generate"):
         TG_STATE[chat_id] = {"step": "password", "data": {}}
-        tg_send(chat_id,
+        _tg_send(chat_id,
             "🔐 <b>Step 1/2 · Admin Password</b>\n\n"
-            "Send your <b>admin password</b> to authorise key generation:")
+            "Send your <b>admin password</b> to authorise member creation:")
         return
 
-    # ---- Conversational flow ----
+    # Flow
     state = TG_STATE.get(chat_id)
     if not state:
-        tg_send(chat_id, "Unknown command. Send /help")
+        _tg_send(chat_id, "Unknown command. Send /help")
         return
 
     if state["step"] == "password":
         if text != ADMIN_PASS:
             TG_STATE.pop(chat_id, None)
-            tg_send(chat_id, "❌ <b>Wrong password.</b>\nStart again with /generatekey")
+            _tg_send(chat_id, "❌ <b>Wrong password.</b>\nStart again with /generatekey")
             return
-        state["step"] = "name"
-        tg_send(chat_id,
+        state["step"] = "username"
+        _tg_send(chat_id,
             "✅ <b>Password accepted.</b>\n\n"
-            "📝 <b>Step 2/2 · Username / Label</b>\n\n"
-            "Send a <b>name</b> for this key (e.g. customer name):")
+            "📝 <b>Step 2/2 · Username</b>\n\n"
+            "Send the <b>username</b> for the new member\n"
+            "(letters, numbers, dot, dash, underscore only):")
         return
 
-    if state["step"] == "name":
-        name = (text[:60] or "telegram-key").strip()
-        key = "FT-" + secrets.token_hex(10).upper()
-        expires_at = iso(now_utc() + timedelta(days=30))
-        db_write(
-            "INSERT INTO api_keys(key,name,by_name,tools,created_at,expires_at,req_limit,req_count,status,price,note) "
-            "VALUES (?,?,?,?,?,?,?,0,'active',?,?)",
-            (key, name, "", "all", iso(now_utc()), expires_at, 0, 0.0, "via Telegram bot")
-        )
+    if state["step"] == "username":
+        username = text.strip()
+        if len(username) < 4 or len(username) > 30 or not all(c.isalnum() or c in "-_." for c in username):
+            _tg_send(chat_id, "❌ Invalid username. Use 4-30 chars: letters/numbers/-/_/.\nTry again:")
+            return
+        if db_one("SELECT id FROM members WHERE username = ?", (username,)):
+            _tg_send(chat_id, f"❌ Username <code>{username}</code> already exists.\nSend a different one:")
+            return
+
+        password = _gen_password(12)
+        pwd_hash = generate_password_hash(password)
+        db_write("INSERT INTO members(username,password_hash,name,created_at,status,created_by) VALUES(?,?,?,?,?,?)",
+                 (username, pwd_hash, username, iso(now_utc()), "active", "telegram"))
         TG_STATE.pop(chat_id, None)
 
-        api_base = _public_base() + "/api"
-        exp_str = parse_iso(expires_at).strftime("%Y-%m-%d %H:%M UTC")
-
+        base = _public_base()
         reply = (
-            "✅ <b>Key Generated Successfully!</b>\n\n"
-            "🔑 <b>API Key:</b>\n"
-            f"<code>{key}</code>\n\n"
-            "👤 <b>Username / Label:</b>\n"
-            f"<code>{name}</code>\n\n"
-            "🌐 <b>API Base URL:</b>\n"
-            f"<code>{api_base}</code>\n\n"
-            f"📅 <b>Expires:</b> {exp_str} (30 days)\n"
-            "🔧 <b>Tools:</b> All\n"
-            "♾ <b>Request limit:</b> Unlimited\n\n"
-            "<i>Tap any code block above to copy it instantly.</i>"
+            "✅ <b>Member Created Successfully!</b>\n\n"
+            "👤 <b>Username:</b>\n"
+            f"<code>{username}</code>\n\n"
+            "🔑 <b>Password:</b>\n"
+            f"<code>{password}</code>\n\n"
+            "🌐 <b>Login URL:</b>\n"
+            f"<code>{base}/admin/login</code>\n\n"
+            "📅 <b>Created:</b> " + now_utc().strftime("%Y-%m-%d %H:%M UTC") + "\n\n"
+            "<i>Share username + password with your member.\n"
+            "Tap any code block above to copy it.</i>"
         )
-        tg_send(chat_id, reply)
+        _tg_send(chat_id, reply)
         return
 
 @app.route("/telegram/webhook", methods=["POST"])
 def telegram_webhook():
-    if TELEGRAM_WEBHOOK_SECRET:
-        if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != TELEGRAM_WEBHOOK_SECRET:
+    secret = get_bot_secret()
+    if secret:
+        if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != secret:
             return ("Unauthorized", 401)
-    update = request.get_json(silent=True) or {}
-    try: tg_handle_update(update)
+    try: tg_handle_update(request.get_json(silent=True) or {})
     except Exception: pass
     return ("ok", 200)
 
@@ -345,7 +369,6 @@ def telegram_webhook():
 def proxy(tool_id):
     t = TOOL_MAP.get(tool_id)
     if not t: return jsonify(ok=False, error="Unknown endpoint"), 404
-
     user_key = (request.args.get("key") or "").strip()
     if not user_key: return jsonify(ok=False, error="Missing key parameter"), 401
 
@@ -362,7 +385,6 @@ def proxy(tool_id):
         params[p] = v
 
     payload = dict(params); payload["key"] = UPSTREAM_KEY
-
     try:
         up = requests.get(f"{UPSTREAM_BASE}/{t['path']}", params=payload, timeout=45)
         content = up.content
@@ -398,30 +420,62 @@ def root(): return redirect("/admin")
 @app.route("/health")
 def health():
     return jsonify(ok=True, brand=BRAND, time=iso(now_utc()), db=DB_PATH,
-                   telegram=bool(TELEGRAM_BOT_TOKEN))
+                   telegram=bool(get_bot_token()))
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     if request.method == "POST":
+        wants_json = (request.is_json
+                      or "application/json" in (request.headers.get("Accept") or ""))
         data = request.get_json(silent=True) or request.form
         u = (data.get("username") or "").strip()
         p = (data.get("password") or "").strip()
-        if u == ADMIN_USER and p == ADMIN_PASS:
-            session["admin"] = True; session["admin_user"] = u
+        ok_admin = (u == ADMIN_USER and p == ADMIN_PASS)
+        ok_member = False
+        member_row = None
+        if not ok_admin:
+            member_row = db_one("SELECT * FROM members WHERE username = ? AND status = 'active'", (u,))
+            if member_row and check_password_hash(member_row["password_hash"], p):
+                ok_member = True
+
+        if ok_admin or ok_member:
+            session["admin"] = True
+            session["username"] = u
+            if ok_admin:
+                session["role"] = "admin"
+                session["name"] = u
+            else:
+                session["role"] = "member"
+                session["name"] = member_row.get("name") or u
+                db_write("UPDATE members SET last_login = ? WHERE id = ?",
+                         (iso(now_utc()), member_row["id"]))
+            if wants_json:
+                return jsonify(ok=True, role=session["role"])
             return redirect("/admin")
+
+        if wants_json:
+            return jsonify(ok=False, error="Invalid username or password"), 401
         return Response(LOGIN_HTML.replace("__ERR__", "Invalid username or password"),
                         401, content_type="text/html")
     return Response(LOGIN_HTML.replace("__ERR__", ""), content_type="text/html")
 
 @app.route("/admin/logout")
 def admin_logout():
-    session.clear(); return redirect("/admin/login")
+    session.clear()
+    return redirect("/admin/login")
 
 @app.route("/admin")
 @admin_required
-def admin_home(): return Response(DASH_HTML, content_type="text/html")
+def admin_home():
+    return Response(DASH_HTML, content_type="text/html")
 
 # ----------------------------- ADMIN API -------------------------
+@app.route("/admin/api/me")
+@admin_required
+def api_me():
+    return jsonify(ok=True, username=session.get("username"),
+                   role=session.get("role"), name=session.get("name"))
+
 @app.route("/admin/api/tools")
 @admin_required
 def api_tools(): return jsonify(ok=True, tools=TOOLS)
@@ -462,8 +516,8 @@ def api_stats():
     return jsonify(ok=True, total_keys=total_keys, active_keys=active_keys,
                    suspended_keys=suspended, expired_keys=expired,
                    total_requests=total_requests, today_requests=today_requests,
-                   revenue_total=round(rev_total, 2),
-                   revenue_range=round(rev_range, 2), range=rng, series=series)
+                   revenue_total=round(rev_total, 2), revenue_range=round(rev_range, 2),
+                   range=rng, series=series)
 
 @app.route("/admin/api/keys", methods=["GET"])
 @admin_required
@@ -472,8 +526,7 @@ def api_keys_list():
     rows = [key_state(r) for r in db_fetch("SELECT * FROM api_keys ORDER BY id DESC")]
     if q:
         rows = [r for r in rows if q in (r["key"] or "").lower()
-                or q in (r["name"] or "").lower()
-                or q in (r["tools"] or "").lower()]
+                or q in (r["name"] or "").lower() or q in (r["tools"] or "").lower()]
     return jsonify(ok=True, keys=rows)
 
 @app.route("/admin/api/keys", methods=["POST"])
@@ -490,7 +543,6 @@ def api_keys_create():
 
     name = (d.get("name") or "").strip()[:60] or "unnamed"
     by_name = (d.get("by_name") or "").strip()[:60]
-
     tools = d.get("tools") or ["all"]
     if isinstance(tools, str): tools = [x.strip() for x in tools.split(",") if x.strip()]
     tools = [t for t in tools if t in TOOL_MAP]
@@ -498,7 +550,6 @@ def api_keys_create():
 
     expires_ms = d.get("expires_ms")
     expires_at = ms_to_iso(expires_ms) if expires_ms else None
-
     try: req_limit = max(0, int(d.get("req_limit") or 0))
     except Exception: req_limit = 0
     try: price = max(0.0, float(d.get("price") or 0))
@@ -515,7 +566,6 @@ def api_keys_create():
 def api_keys_edit(kid):
     row = db_one("SELECT * FROM api_keys WHERE id = ?", (kid,))
     if not row: return jsonify(ok=False, error="Key not found"), 404
-
     d = request.get_json(silent=True) or {}
     updates = {}
     if "name" in d: updates["name"] = (d.get("name") or "").strip()[:60] or "unnamed"
@@ -534,9 +584,7 @@ def api_keys_edit(kid):
         try: updates["price"] = max(0.0, float(d.get("price") or 0))
         except Exception: updates["price"] = 0.0
     if "note" in d: updates["note"] = (d.get("note") or "").strip()[:300]
-    if "status" in d and d["status"] in ("active", "suspended"):
-        updates["status"] = d["status"]
-
+    if "status" in d and d["status"] in ("active", "suspended"): updates["status"] = d["status"]
     if updates:
         sets = ", ".join(f"{k}=?" for k in updates)
         db_write(f"UPDATE api_keys SET {sets} WHERE id=?", tuple(updates.values()) + (kid,))
@@ -563,7 +611,6 @@ def api_logs():
     key = (request.args.get("key") or "").strip()
     try: limit = min(1000, max(1, int(request.args.get("limit") or 200)))
     except Exception: limit = 200
-
     sql = "SELECT * FROM logs WHERE 1=1"; args = []
     if key: sql += " AND key = ?"; args.append(key)
     if q:
@@ -572,36 +619,120 @@ def api_logs():
     sql += " ORDER BY id DESC LIMIT ?"; args.append(limit)
     return jsonify(ok=True, logs=db_fetch(sql, tuple(args)))
 
-# ---------- TELEGRAM ADMIN API ----------
-@app.route("/admin/api/telegram/status")
-@admin_required
-def telegram_status():
-    if not TELEGRAM_BOT_TOKEN:
-        return jsonify(ok=True, configured=False,
-                       message="TELEGRAM_BOT_TOKEN not set in Railway Variables")
+# ----- MEMBERS -----
+@app.route("/admin/api/members", methods=["GET"])
+@super_admin_required
+def api_members():
+    q = (request.args.get("q") or "").strip().lower()
+    rows = db_fetch("SELECT id,username,name,status,created_at,created_by,last_login FROM members ORDER BY id DESC")
+    if q:
+        rows = [r for r in rows if q in (r["username"] or "").lower() or q in (r["name"] or "").lower()]
+    return jsonify(ok=True, members=rows)
+
+@app.route("/admin/api/members/<int:mid>", methods=["DELETE"])
+@super_admin_required
+def api_member_delete(mid):
+    db_write("DELETE FROM members WHERE id = ?", (mid,))
+    return jsonify(ok=True)
+
+# ----- TELEGRAM SETTINGS -----
+@app.route("/admin/api/telegram/config", methods=["GET"])
+@super_admin_required
+def api_tg_config():
+    return jsonify(ok=True,
+                   token=get_bot_token(),
+                   chat_id=get_bot_chat(),
+                   secret=get_bot_secret(),
+                   public_url=get_public_url())
+
+@app.route("/admin/api/telegram/save-token", methods=["POST"])
+@super_admin_required
+def api_tg_save_token():
+    d = request.get_json(silent=True) or {}
+    token = (d.get("token") or "").strip()
+    if not token: return jsonify(ok=False, error="Token is empty"), 400
+    # Verify with getMe
     try:
-        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo", timeout=15)
-        info = r.json()
-        return jsonify(ok=True, configured=True, info=info)
+        r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15)
+        res = r.json()
+        if not res.get("ok"):
+            return jsonify(ok=False, error=res.get("description", "Invalid token")), 400
+        bot_username = (res.get("result") or {}).get("username", "")
+    except Exception as e:
+        return jsonify(ok=False, error=f"Verification failed: {e}"), 500
+    set_setting("tg_bot_token", token)
+    return jsonify(ok=True, bot_username=bot_username)
+
+@app.route("/admin/api/telegram/save-chat", methods=["POST"])
+@super_admin_required
+def api_tg_save_chat():
+    d = request.get_json(silent=True) or {}
+    chat_id = str(d.get("chat_id") or "").strip()
+    if not chat_id: return jsonify(ok=False, error="Chat ID is empty"), 400
+    set_setting("tg_chat_id", chat_id)
+    return jsonify(ok=True)
+
+@app.route("/admin/api/telegram/save-public", methods=["POST"])
+@super_admin_required
+def api_tg_save_public():
+    d = request.get_json(silent=True) or {}
+    url = (d.get("url") or "").strip().rstrip("/")
+    set_setting("public_base_url", url)
+    return jsonify(ok=True)
+
+@app.route("/admin/api/telegram/install", methods=["POST"])
+@super_admin_required
+def api_tg_install():
+    token = get_bot_token()
+    if not token: return jsonify(ok=False, error="Save bot token first"), 400
+    base = _public_base()
+    if not base.startswith("http"):
+        return jsonify(ok=False, error="Set PUBLIC_BASE_URL first (must start with http)"), 400
+
+    webhook_url = base + "/telegram/webhook"
+    secret = get_bot_secret()
+    if not secret:
+        secret = secrets.token_hex(16)
+        set_setting("tg_webhook_secret", secret)
+
+    payload = {"url": webhook_url, "allowed_updates": ["message"], "secret_token": secret}
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{token}/setWebhook", json=payload, timeout=15)
+        res = r.json()
+    except Exception as e:
+        return jsonify(ok=False, error=f"Webhook setup failed: {e}"), 500
+
+    if not res.get("ok"):
+        return jsonify(ok=False, error=res.get("description", "Failed")), 400
+
+    # Verify + send test message to chat
+    test_ok = False
+    if get_bot_chat():
+        test_ok = bool(_tg_send(get_bot_chat(),
+            "✅ <b>Bot installed successfully!</b>\n\n"
+            "Send /generatekey to create a member login."))
+
+    return jsonify(ok=True, webhook=webhook_url, test_sent=test_ok)
+
+@app.route("/admin/api/telegram/status", methods=["GET"])
+@super_admin_required
+def api_tg_status():
+    token = get_bot_token()
+    if not token: return jsonify(ok=True, configured=False)
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=15)
+        return jsonify(ok=True, configured=True, info=r.json())
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
-@app.route("/admin/api/telegram/set-webhook", methods=["POST"])
-@admin_required
-def telegram_set_webhook():
-    if not TELEGRAM_BOT_TOKEN:
-        return jsonify(ok=False, error="TELEGRAM_BOT_TOKEN not set"), 400
-    base = _public_base()
-    webhook_url = base + "/telegram/webhook"
-    payload = {"url": webhook_url, "allowed_updates": ["message"]}
-    if TELEGRAM_WEBHOOK_SECRET:
-        payload["secret_token"] = TELEGRAM_WEBHOOK_SECRET
-    try:
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook",
-                          json=payload, timeout=15)
-        return jsonify(r.json())
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+@app.route("/admin/api/telegram/test", methods=["POST"])
+@super_admin_required
+def api_tg_test():
+    chat_id = get_bot_chat()
+    if not chat_id: return jsonify(ok=False, error="Save Chat ID first"), 400
+    res = _tg_send(chat_id, "🧪 <b>Test message</b>\n\nBot is connected and ready.\nSend /generatekey to create a member.")
+    if res and res.get("ok"): return jsonify(ok=True)
+    return jsonify(ok=False, error=(res or {}).get("description", "Failed")), 400
 
 # ============================================================
 #                         LOGIN PAGE
@@ -661,9 +792,11 @@ button:hover{transform:translateY(-2px);box-shadow:0 22px 44px -18px rgba(0,229,
 .scanline{position:absolute;top:0;left:0;width:100%;height:100%;
   background:linear-gradient(to bottom,rgba(255,255,255,0),rgba(255,255,255,0) 50%,rgba(0,255,0,0.1) 50%,rgba(0,255,0,0.1));
   background-size:100% 4px;pointer-events:none;opacity:0.3}
+#snow{position:fixed;inset:0;pointer-events:none;z-index:1}
 </style>
 </head>
 <body>
+<canvas id="snow"></canvas>
 <div id="hacker-overlay"><div class="scanline"></div><div id="hacker-text"></div></div>
 <div class="wrap">
   <div class="card">
@@ -671,7 +804,7 @@ button:hover{transform:translateY(-2px);box-shadow:0 22px 44px -18px rgba(0,229,
     <h1>SHAYAN_EXPLORER</h1>
     <div class="sub">OSINT API · CONTROL CENTER</div>
     __ERRBLOCK__
-    <form method="post" autocomplete="off" id="loginForm" onsubmit="startHacking(event)">
+    <form autocomplete="off" id="loginForm" onsubmit="startHacking(event)">
       <label>Username</label>
       <input name="username" id="uName" placeholder="Enter username" required autofocus>
       <label>Password</label>
@@ -682,17 +815,54 @@ button:hover{transform:translateY(-2px);box-shadow:0 22px 44px -18px rgba(0,229,
   </div>
 </div>
 <script>
+// ---------- Snowfall ----------
+(function(){
+  const c = document.getElementById('snow'); const ctx = c.getContext('2d');
+  let W, H;
+  function resize(){ W = c.width = innerWidth; H = c.height = innerHeight; }
+  resize(); addEventListener('resize', resize);
+  const flakes = Array.from({length:50}, () => ({
+    x: Math.random()*W, y: Math.random()*H, r: Math.random()*2.2+0.4,
+    dx: Math.random()*0.4-0.2, dy: Math.random()*0.3+0.15, o: Math.random()*0.5+0.15
+  }));
+  function tick(){
+    ctx.clearRect(0,0,W,H);
+    for(const f of flakes){
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(220,240,255,${f.o})`; ctx.fill();
+      f.x += f.dx; f.y += f.dy;
+      if (f.y > H+5) { f.y = -5; f.x = Math.random()*W; }
+      if (f.x < -5) f.x = W; if (f.x > W+5) f.x = 0;
+    }
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+
+// ---------- Login ----------
 function startHacking(e) {
   e.preventDefault();
+  const username = document.getElementById('uName').value.trim();
+  const password = document.getElementById('pWord').value.trim();
+  if (!username || !password) return;
+
+  const loginPromise = fetch('/admin/login', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+    body: JSON.stringify({username, password})
+  }).then(r => r.json()).catch(() => ({ok:false, error:'Network error'}));
+
   const overlay = document.getElementById('hacker-overlay');
   const textDiv = document.getElementById('hacker-text');
+  textDiv.innerHTML = '';
   overlay.style.display = 'block';
+
   const lines = [
     "> [SYSTEM] Initializing SHAYAN_EXPLORER OSINT Engine...",
-    "> [AUTH] Checking credentials...",
-    "> [NET] Bypassing firewall protocols...",
-    "> [SEC] Injecting payload...",
-    "> [DB] Connecting to secure database...",
+    "> [AUTH] Verifying credentials...",
+    "> [NET] Establishing secure channel...",
+    "> [SEC] Validating session token...",
+    "> [DB] Connecting to encrypted store...",
     "> [SYSTEM] Access Granted. Loading Dashboard..."
   ];
   let i = 0;
@@ -704,14 +874,25 @@ function startHacking(e) {
       textDiv.appendChild(p); i++;
     } else {
       clearInterval(interval);
-      setTimeout(() => { document.getElementById('loginForm').submit(); }, 500);
+      loginPromise.then(result => {
+        if (result && result.ok) {
+          sessionStorage.setItem('auth', '1');
+          setTimeout(() => { location.href = '/admin'; }, 300);
+        } else {
+          overlay.style.display = 'none';
+          const errDiv = document.querySelector('.err');
+          const msg = (result && result.error) || 'Login failed';
+          if (errDiv) { errDiv.textContent = msg; errDiv.style.display = 'block'; }
+          else alert(msg);
+        }
+      });
     }
-  }, 400);
+  }, 350);
 }
 </script>
 </body>
 </html>"""
-LOGIN_HTML = LOGIN_HTML.replace("__ERRBLOCK__", '<div class="err">__ERR__</div>')
+LOGIN_HTML = LOGIN_HTML.replace("__ERRBLOCK__", '<div class="err" style="display:none">__ERR__</div>')
 
 # ============================================================
 #                       DASHBOARD PAGE
@@ -723,9 +904,9 @@ DASH_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
 <title>SHAYAN_EXPLORER · OSINT API CONTROL</title>
 <style>
-:root{--bg:#03060d;--panel:rgba(10,18,32,.82);--panel2:rgba(13,24,42,.7);
-  --line:rgba(0,229,255,.16);--cyan:#00e5ff;--blue:#3b82f6;--violet:#8b5cf6;
-  --green:#22e08a;--red:#ff4d6d;--amber:#ffb020;--txt:#dceaff;--mut:#7b93b5;--r:16px;}
+:root{--bg:#03060d;--panel:rgba(10,18,32,.82);--line:rgba(0,229,255,.16);
+  --cyan:#00e5ff;--blue:#3b82f6;--violet:#8b5cf6;--green:#22e08a;--red:#ff4d6d;
+  --amber:#ffb020;--txt:#dceaff;--mut:#7b93b5;--r:16px;}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;font-family:"Segoe UI",Inter,system-ui,-apple-system,sans-serif;
@@ -741,6 +922,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   -webkit-mask-image:radial-gradient(circle at 50% 30%,#000 15%,transparent 80%);
           mask-image:radial-gradient(circle at 50% 30%,#000 15%,transparent 80%)}
 @keyframes grid{to{background-position:58px 58px,58px 58px}}
+#snow{position:fixed;inset:0;pointer-events:none;z-index:1}
 .app{position:relative;z-index:2;display:flex;min-height:100vh}
 .sidebar{width:250px;flex:0 0 250px;padding:20px 14px;display:flex;flex-direction:column;gap:8px;
   background:linear-gradient(180deg,rgba(8,16,30,.95),rgba(4,9,18,.92));
@@ -783,7 +965,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .card{background:linear-gradient(160deg,rgba(13,24,42,.9),rgba(6,12,24,.88));
   border:1px solid var(--line);border-radius:var(--r);padding:18px;position:relative;
   box-shadow:0 20px 44px -28px rgba(0,229,255,.55),inset 0 1px 0 rgba(255,255,255,.05);
-  transition:transform .3s,box-shadow .3s;transform-style:preserve-3d}
+  transition:transform .3s,box-shadow .3s}
 .card:hover{transform:translateY(-4px) rotateX(1.5deg);box-shadow:0 30px 60px -26px rgba(0,229,255,.75)}
 .card h3{margin:0 0 4px;font-size:11px;letter-spacing:2px;color:var(--mut);font-weight:700;text-transform:uppercase}
 .card .big{font-size:29px;font-weight:800;letter-spacing:-.5px;
@@ -856,21 +1038,20 @@ tr:hover td{background:rgba(0,229,255,.04)}
 .toast.ok{border-color:rgba(34,224,138,.55);color:#a8f7d2}
 @keyframes slide{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
 .empty{padding:26px;text-align:center;color:var(--mut);font-size:12px}
-.overlay{position:fixed;inset:0;background:rgba(2,6,14,.7);backdrop-filter:blur(3px);
-  z-index:55;display:none}
+.overlay{position:fixed;inset:0;background:rgba(2,6,14,.7);backdrop-filter:blur(3px);z-index:55;display:none}
 .overlay.show{display:block}
 .doc-item{padding:13px 14px;border-radius:12px;background:rgba(2,8,16,.6);
   border:1px solid rgba(0,229,255,.1);margin-bottom:9px}
 .doc-item .u{font-family:ui-monospace,Menlo,monospace;font-size:11.6px;color:#8ce8ff;word-break:break-all}
 .doc-item .d{font-size:10.4px;color:var(--mut);margin-top:4px;letter-spacing:.6px}
 
-/* KEBAB MENU (3-dot) */
+/* 3-dot menu */
 .menu3-wrap{position:relative}
 .icon-btn-3dot{width:40px;height:40px;border-radius:11px;border:1px solid var(--line);
   background:rgba(0,229,255,.07);color:var(--cyan);font-size:20px;cursor:pointer;
   display:grid;place-items:center;transition:.18s;font-weight:900;line-height:1}
 .icon-btn-3dot:hover{background:rgba(0,229,255,.18);transform:rotate(90deg)}
-.menu3{position:absolute;top:calc(100% + 10px);right:0;min-width:220px;
+.menu3{position:absolute;top:calc(100% + 10px);right:0;min-width:230px;
   background:linear-gradient(160deg,rgba(13,24,42,.98),rgba(5,10,20,.99));
   border:1px solid rgba(0,229,255,.3);border-radius:14px;padding:8px;
   box-shadow:0 25px 55px -20px rgba(0,229,255,.9);display:none;z-index:120}
@@ -886,12 +1067,22 @@ tr:hover td{background:rgba(0,229,255,.04)}
 .menu3 .mi.danger{color:#ffb3c1}
 .menu3 .mi.danger:hover{background:rgba(255,77,109,.15);color:#ff8ea0}
 
-/* Small copy button inline in doc */
 .copy-inline{padding:5px 9px;border-radius:7px;border:1px solid rgba(0,229,255,.35);
   background:rgba(0,229,255,.09);color:#8ce8ff;font-size:10px;font-weight:800;
   letter-spacing:.8px;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap}
 .copy-inline:hover{background:rgba(0,229,255,.22);color:#fff}
 .copy-inline.copied{background:rgba(34,224,138,.22);border-color:rgba(34,224,138,.5);color:#a8f7d2}
+
+/* Bot setup wizard */
+.wiz-step{padding:14px 16px;border-radius:12px;background:rgba(2,8,16,.6);
+  border:1px solid rgba(0,229,255,.12);margin-bottom:12px}
+.wiz-step.done{border-color:rgba(34,224,138,.4);background:rgba(34,224,138,.06)}
+.wiz-step .sh{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.wiz-step .sh .n{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+  background:rgba(0,229,255,.15);color:var(--cyan);font-weight:900;font-size:12px}
+.wiz-step.done .sh .n{background:rgba(34,224,138,.2);color:var(--green)}
+.wiz-step .sh .t{font-size:12px;font-weight:800;letter-spacing:1.4px}
+.wiz-step .status{font-size:11px;color:var(--mut);margin-top:8px}
 
 @media(max-width:1100px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:860px){
@@ -911,6 +1102,7 @@ tr:hover td{background:rgba(0,229,255,.04)}
 </style>
 </head>
 <body>
+<canvas id="snow"></canvas>
 <div id="toasts"></div>
 <div class="app">
   <aside class="sidebar" id="sidebar">
@@ -926,9 +1118,10 @@ tr:hover td{background:rgba(0,229,255,.04)}
     <button class="nav-item" data-view="logs"><span>▤</span> Request Logs</button>
     <button class="nav-item" data-view="revenue"><span>₹</span> Revenue</button>
     <button class="nav-item" data-view="docs"><span>❰❱</span> API Docs</button>
+    <button class="nav-item admin-only" data-view="members" style="display:none"><span>👥</span> Members</button>
     <div class="side-foot">
       <div class="dev">API DEVELOPER<br><b>SHAYAN_EXPLORER</b></div>
-      <a class="btn ghost" href="/admin/logout" style="text-align:center;text-decoration:none">LOGOUT</a>
+      <a class="btn ghost" href="/admin/logout" onclick="sessionStorage.removeItem('auth')" style="text-align:center;text-decoration:none">LOGOUT</a>
     </div>
   </aside>
   <div class="overlay" id="overlay"></div>
@@ -944,13 +1137,14 @@ tr:hover td{background:rgba(0,229,255,.04)}
           <button class="mi" onclick="refreshCurrent()"><span class="ic">🔄</span> Refresh</button>
           <button class="mi" onclick="copyAdminUrl()"><span class="ic">🔗</span> Copy Admin URL</button>
           <button class="mi" onclick="showView('docs');closeMenu3()"><span class="ic">❰❱</span> API Docs</button>
-          <button class="mi" onclick="openTelegramSetup();closeMenu3()"><span class="ic">🤖</span> Telegram Bot</button>
+          <button class="mi admin-only" onclick="openTgModal();closeMenu3()" style="display:none"><span class="ic">🤖</span> Connect Telegram Bot</button>
           <div class="sep"></div>
-          <a class="mi danger" href="/admin/logout"><span class="ic">🚪</span> Logout</a>
+          <a class="mi danger" href="/admin/logout" onclick="sessionStorage.removeItem('auth')"><span class="ic">🚪</span> Logout</a>
         </div>
       </div>
     </header>
     <div class="content">
+      <!-- OVERVIEW -->
       <section class="view active" id="view-overview">
         <div class="grid g4">
           <div class="card glow"><h3>Total Keys</h3><div class="big" id="s-keys">0</div><div class="sub" id="s-keys-sub">—</div></div>
@@ -973,10 +1167,11 @@ tr:hover td{background:rgba(0,229,255,.04)}
             <button class="btn ghost" onclick="showView('keys')">MANAGE KEYS</button>
             <button class="btn ghost" onclick="showView('logs')">VIEW LOGS</button>
             <button class="btn ghost" onclick="showView('docs')">API DOCS</button>
-            <button class="btn ghost" onclick="openTelegramSetup()">🤖 TELEGRAM BOT</button>
+            <button class="btn ghost admin-only" style="display:none" onclick="openTgModal()">🤖 CONNECT TELEGRAM</button>
           </div>
         </div>
       </section>
+      <!-- KEYS -->
       <section class="view" id="view-keys">
         <div class="panel" style="margin-top:0">
           <div class="panel-head">
@@ -996,6 +1191,7 @@ tr:hover td{background:rgba(0,229,255,.04)}
           </div>
         </div>
       </section>
+      <!-- LOGS -->
       <section class="view" id="view-logs">
         <div class="panel" style="margin-top:0">
           <div class="panel-head">
@@ -1012,6 +1208,7 @@ tr:hover td{background:rgba(0,229,255,.04)}
           </div>
         </div>
       </section>
+      <!-- REVENUE -->
       <section class="view" id="view-revenue">
         <div class="panel" style="margin-top:0">
           <div class="panel-head">
@@ -1034,6 +1231,7 @@ tr:hover td{background:rgba(0,229,255,.04)}
           <div class="chart" id="revChart2" style="margin-top:16px"></div>
         </div>
       </section>
+      <!-- DOCS -->
       <section class="view" id="view-docs">
         <div class="panel" style="margin-top:0">
           <div class="panel-head">
@@ -1047,29 +1245,49 @@ tr:hover td{background:rgba(0,229,255,.04)}
           <div id="docsList"></div>
         </div>
       </section>
+      <!-- MEMBERS (admin only) -->
+      <section class="view" id="view-members">
+        <div class="panel" style="margin-top:0">
+          <div class="panel-head">
+            <h2>MEMBERS · Created via Telegram Bot</h2>
+            <div class="spacer"></div>
+            <input class="search" id="memberSearch" placeholder="Search username / name..." oninput="loadMembers()">
+            <button class="btn ghost" onclick="openTgModal()">🤖 TELEGRAM BOT</button>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Username</th><th>Name</th><th>Status</th>
+                <th>Created</th><th>Last Login</th><th>Created By</th><th>Actions</th>
+              </tr></thead>
+              <tbody id="membersBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 </div>
 
-<!-- ============ KEY MODAL ============ -->
+<!-- KEY MODAL -->
 <div class="modal" id="keyModal">
   <div class="modal-box">
     <h2 id="modalTitle">GENERATE API KEY</h2>
-    <p class="hint" id="modalHint">Custom key or auto-generated · choose tools · set expiry & limit</p>
+    <p class="hint">Custom key or auto-generated · choose tools · set expiry & limit</p>
     <label class="fl">API Key (custom or random)</label>
     <div style="display:flex;gap:8px">
       <input id="kKey" placeholder="Leave empty for auto key">
       <button class="btn ghost" style="flex:0 0 auto" onclick="randomKey()">🎲 RANDOM</button>
     </div>
-    <label class="fl">Key Name (for history)</label>
+    <label class="fl">Key Name</label>
     <input id="kName" placeholder="e.g. customer name / label">
     <label class="fl">Developer Name / "By" (Optional)</label>
-    <input id="kByName" placeholder="e.g. SHAYAN_EXPLORER (Leave blank for default)">
+    <input id="kByName" placeholder="SHAYAN_EXPLORER (default)">
     <div class="row2">
       <div><label class="fl">Request Limit (0 = unlimited)</label><input id="kLimit" type="number" min="0" value="0"></div>
       <div><label class="fl">Price (₹) — revenue</label><input id="kPrice" type="number" min="0" step="1" value="0"></div>
     </div>
-    <label class="fl">Expiry Date &amp; Time (required)</label>
+    <label class="fl">Expiry Date & Time (required)</label>
     <input id="kExpiry" type="datetime-local">
     <div class="quick">
       <button class="btn ghost sm" onclick="setExpiry(3600000)">+1 HOUR</button>
@@ -1092,40 +1310,73 @@ tr:hover td{background:rgba(0,229,255,.04)}
   </div>
 </div>
 
-<!-- ============ TELEGRAM MODAL ============ -->
+<!-- TELEGRAM BOT WIZARD -->
 <div class="modal" id="tgModal">
   <div class="modal-box">
-    <h2>🤖 TELEGRAM BOT SETUP</h2>
-    <p class="hint">Generate API keys from Telegram with /generatekey</p>
-    <div id="tgStatus" style="padding:14px;border-radius:12px;background:rgba(2,8,16,.6);border:1px solid rgba(0,229,255,.15);margin-bottom:14px;font-size:12px;min-height:60px">Checking...</div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <button class="btn" style="flex:1;min-width:180px" onclick="setupTelegramWebhook()">INSTALL / REFRESH WEBHOOK</button>
-      <button class="btn ghost" onclick="refreshTelegramStatus()">REFRESH</button>
-      <button class="btn ghost" onclick="closeModal('tgModal')">CLOSE</button>
+    <h2>🤖 CONNECT TELEGRAM BOT</h2>
+    <p class="hint">4 steps · bot creates member logins via /generatekey</p>
+
+    <div class="wiz-step" id="wiz1">
+      <div class="sh"><div class="n">1</div><div class="t">BOT TOKEN</div></div>
+      <input id="tgTokenInput" placeholder="123456:ABC-DEF...">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" style="flex:1" onclick="saveTgToken()">SAVE & VERIFY</button>
+      </div>
+      <div class="status" id="tgTokenStatus">Get token from @BotFather</div>
     </div>
-    <div style="margin-top:18px;padding:14px;border-radius:12px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.15);font-size:11px;line-height:1.8;color:var(--mut)">
-      <b style="color:var(--cyan)">📋 Setup steps:</b><br>
-      1. Create a bot with <b>@BotFather</b> → copy token<br>
-      2. Get your chat ID from <b>@userinfobot</b><br>
-      3. Add these Railway Variables → redeploy:<br>
-      &nbsp;&nbsp;• <code>TELEGRAM_BOT_TOKEN</code><br>
-      &nbsp;&nbsp;• <code>TELEGRAM_ADMIN_CHAT_ID</code><br>
-      &nbsp;&nbsp;• <code>PUBLIC_BASE_URL</code> (e.g. https://your-domain.up.railway.app)<br>
-      4. Click <b>INSTALL / REFRESH WEBHOOK</b> above<br>
-      5. Open your bot → send <code>/generatekey</code><br><br>
-      <b style="color:var(--cyan)">Bot commands:</b><br>
-      <code>/generatekey</code> — create a key (asks password → name)<br>
-      <code>/listkeys</code> — show last 10 keys<br>
-      <code>/cancel</code> — cancel current flow
+
+    <div class="wiz-step" id="wiz2">
+      <div class="sh"><div class="n">2</div><div class="t">YOUR CHAT ID</div></div>
+      <input id="tgChatInput" placeholder="123456789">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" style="flex:1" onclick="saveTgChat()">SAVE CHAT ID</button>
+      </div>
+      <div class="status" id="tgChatStatus">Get chat ID from @userinfobot</div>
+    </div>
+
+    <div class="wiz-step" id="wiz3">
+      <div class="sh"><div class="n">3</div><div class="t">PUBLIC URL</div></div>
+      <input id="tgPublicInput" placeholder="https://your-app.up.railway.app">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" style="flex:1" onclick="saveTgPublic()">SAVE URL</button>
+        <button class="btn ghost" onclick="autofillPublic()">USE THIS URL</button>
+      </div>
+      <div class="status" id="tgPublicStatus">Your Railway public domain</div>
+    </div>
+
+    <div class="wiz-step" id="wiz4">
+      <div class="sh"><div class="n">4</div><div class="t">INSTALL & START BOT</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn green" style="flex:1;min-width:180px" onclick="installBot()">INSTALL / START BOT</button>
+        <button class="btn ghost" onclick="testBot()">SEND TEST MESSAGE</button>
+      </div>
+      <div class="status" id="tgInstallStatus">After this, open Telegram & send /generatekey</div>
+    </div>
+
+    <div style="margin-top:16px;padding:12px;border-radius:12px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.15);font-size:11px;color:var(--mut);line-height:1.8">
+      <b style="color:var(--cyan)">🤖 Bot Commands:</b><br>
+      <code>/generatekey</code> — create a member login (asks admin password → username)<br>
+      <code>/listmembers</code> — show latest members<br>
+      <code>/help</code> — commands
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      <button class="btn ghost" onclick="closeModal('tgModal')">CLOSE</button>
     </div>
   </div>
 </div>
 
 <script>
+/* ---------- STRICT AUTH (sessionStorage) ---------- */
+if (!sessionStorage.getItem('auth')) {
+  location.replace('/admin/login');
+}
+
+/* ---------- HELPERS ---------- */
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let TOOLS = []; let EDIT_ID = null;
+let TOOLS = []; let EDIT_ID = null; let ME = {role:'member'};
 
 function toast(msg, type='ok'){
   const d = document.createElement('div');
@@ -1136,7 +1387,7 @@ function toast(msg, type='ok'){
 }
 async function jget(url){
   const r = await fetch(url, {credentials:'same-origin'});
-  if(r.status === 401){ location.href = '/admin/login'; return null; }
+  if(r.status === 401){ sessionStorage.removeItem('auth'); location.replace('/admin/login'); return null; }
   try { return await r.json(); } catch(e){ return {ok:false, error:'Bad response'}; }
 }
 async function jsend(url, method, body){
@@ -1145,11 +1396,9 @@ async function jsend(url, method, body){
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body || {})
   });
-  if(r.status === 401){ location.href = '/admin/login'; return null; }
+  if(r.status === 401){ sessionStorage.removeItem('auth'); location.replace('/admin/login'); return null; }
   try { return await r.json(); } catch(e){ return {ok:false, error:'Bad response'}; }
 }
-
-/* ---------- COPY HELPERS (one-click) ---------- */
 async function copyText(text){
   try { await navigator.clipboard.writeText(text); toast('Copied ✅','ok'); return true; }
   catch(e){
@@ -1164,6 +1413,31 @@ async function copyText(text){
 function copyAdminUrl(){ copyText(location.origin + '/admin'); }
 function copyBaseUrl(){ copyText(location.origin + '/api'); }
 
+/* ---------- SNOWFALL ---------- */
+(function(){
+  const c = document.getElementById('snow'); if(!c) return;
+  const ctx = c.getContext('2d');
+  let W, H;
+  function resize(){ W = c.width = innerWidth; H = c.height = innerHeight; }
+  resize(); addEventListener('resize', resize);
+  const flakes = Array.from({length:60}, () => ({
+    x: Math.random()*W, y: Math.random()*H, r: Math.random()*2.2+0.4,
+    dx: Math.random()*0.4-0.2, dy: Math.random()*0.3+0.15, o: Math.random()*0.5+0.15
+  }));
+  function tick(){
+    ctx.clearRect(0,0,W,H);
+    for(const f of flakes){
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(220,240,255,${f.o})`; ctx.fill();
+      f.x += f.dx; f.y += f.dy;
+      if (f.y > H+5) { f.y = -5; f.x = Math.random()*W; }
+      if (f.x < -5) f.x = W; if (f.x > W+5) f.x = 0;
+    }
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+
 /* ---------- 3-DOT MENU ---------- */
 const menu3 = $('#menu3'), menu3Btn = $('#menu3Btn');
 function closeMenu3(){ menu3.classList.remove('show'); }
@@ -1171,16 +1445,15 @@ menu3Btn.addEventListener('click', e => { e.stopPropagation(); menu3.classList.t
 document.addEventListener('click', e => {
   if(!menu3.contains(e.target) && e.target !== menu3Btn) closeMenu3();
 });
-
 function refreshCurrent(){
   const active = document.querySelector('.view.active');
-  if(!active){ loadOverview(); closeMenu3(); return; }
-  const id = active.id.replace('view-','');
+  const id = active ? active.id.replace('view-','') : 'overview';
   if(id === 'overview') loadOverview();
   else if(id === 'keys') loadKeys();
   else if(id === 'logs') loadLogs();
   else if(id === 'revenue') loadRevenue();
   else if(id === 'docs') renderDocs();
+  else if(id === 'members') loadMembers();
   toast('Refreshed', 'ok');
   closeMenu3();
 }
@@ -1204,6 +1477,7 @@ function showView(name){
   if(name === 'logs') loadLogs();
   if(name === 'revenue') loadRevenue();
   if(name === 'docs') renderDocs();
+  if(name === 'members') loadMembers();
 }
 
 /* ---------- OVERVIEW ---------- */
@@ -1226,8 +1500,7 @@ function drawChart(sel, series){
   const max = Math.max(1, ...series.map(s => s.amount));
   el.innerHTML = series.map(s => {
     const h = Math.max(4, Math.round((s.amount / max) * 120));
-    const label = s.date.slice(5);
-    return '<div class="bar" style="height:'+h+'px" title="'+esc(s.date)+' · ₹'+s.amount+' · '+s.count+' keys"><span>'+esc(label)+'</span></div>';
+    return '<div class="bar" style="height:'+h+'px" title="'+esc(s.date)+' · ₹'+s.amount+' · '+s.count+' keys"><span>'+esc(s.date.slice(5))+'</span></div>';
   }).join('');
 }
 
@@ -1237,10 +1510,7 @@ async function loadKeys(){
   const d = await jget('/admin/api/keys?q=' + encodeURIComponent(q));
   if(!d || !d.ok) return;
   const tb = $('#keysBody');
-  if(!d.keys.length){
-    tb.innerHTML = '<tr><td colspan="9" class="empty">No keys yet. Click "+ GENERATE KEY".</td></tr>';
-    return;
-  }
+  if(!d.keys.length){ tb.innerHTML = '<tr><td colspan="9" class="empty">No keys yet.</td></tr>'; return; }
   tb.innerHTML = d.keys.map(k => {
     let badge = '<span class="badge b-active">ACTIVE</span>';
     if(k.expired) badge = '<span class="badge b-exp">EXPIRED</span>';
@@ -1264,13 +1534,11 @@ async function loadKeys(){
         '<button class="btn amber sm" data-act="reset" data-id="'+k.id+'">RESTART</button>' +
         '<button class="btn green sm" data-act="toggle" data-id="'+k.id+'" data-status="'+k.status+'">'+(k.status==='active'?'SUSPEND':'UNSUSPEND')+'</button>' +
         '<button class="btn red sm" data-act="del" data-id="'+k.id+'">DELETE</button>' +
-      '</div></td>' +
-    '</tr>';
+      '</div></td></tr>';
   }).join('');
 }
 $('#keysBody').addEventListener('click', async (e) => {
-  const btn = e.target.closest('button[data-act]');
-  if(!btn) return;
+  const btn = e.target.closest('button[data-act]'); if(!btn) return;
   const act = btn.dataset.act;
   if(act === 'copy'){ copyText(btn.dataset.key); return; }
   if(act === 'edit'){
@@ -1299,7 +1567,7 @@ $('#keysBody').addEventListener('click', async (e) => {
   }
 });
 
-/* ---------- MODAL ---------- */
+/* ---------- KEY MODAL ---------- */
 async function openKeyModal(k){
   EDIT_ID = k ? k.id : null;
   $('#modalTitle').textContent = k ? 'EDIT API KEY' : 'GENERATE API KEY';
@@ -1316,10 +1584,7 @@ async function openKeyModal(k){
   $('#keyModal').classList.add('show');
   document.body.style.overflow = 'hidden';
 }
-function closeModal(id){
-  $('#'+id).classList.remove('show');
-  document.body.style.overflow = '';
-}
+function closeModal(id){ $('#'+id).classList.remove('show'); document.body.style.overflow = ''; }
 function setExpiryAt(ms){
   const d = new Date(ms);
   const p = n => String(n).padStart(2,'0');
@@ -1327,8 +1592,7 @@ function setExpiryAt(ms){
 }
 function setExpiry(offsetMs){ setExpiryAt(Date.now() + offsetMs); }
 function randomKey(){
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let out = 'FT-';
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let out = 'FT-';
   for(let i=0;i<16;i++) out += chars[Math.floor(Math.random()*chars.length)];
   $('#kKey').value = out;
 }
@@ -1363,12 +1627,10 @@ async function saveKey(){
   const tools = $$('.toolChk').filter(b => b.checked).map(b => b.value);
   if(!tools.length){ toast('Select at least one tool', 'err'); return; }
   const expVal = $('#kExpiry').value;
-  if(!expVal){ toast('Expiry date & time is required', 'err'); return; }
+  if(!expVal){ toast('Expiry required', 'err'); return; }
   const payload = {
-    name: $('#kName').value.trim(),
-    by_name: $('#kByName').value.trim(),
-    tools: tools,
-    expires_ms: new Date(expVal).getTime(),
+    name: $('#kName').value.trim(), by_name: $('#kByName').value.trim(),
+    tools: tools, expires_ms: new Date(expVal).getTime(),
     req_limit: parseInt($('#kLimit').value || '0', 10) || 0,
     price: parseFloat($('#kPrice').value || '0') || 0,
     note: $('#kNote').value.trim()
@@ -1377,7 +1639,7 @@ async function saveKey(){
   if(EDIT_ID) r = await jsend('/admin/api/keys/' + EDIT_ID, 'PATCH', payload);
   else { payload.key = $('#kKey').value.trim(); r = await jsend('/admin/api/keys', 'POST', payload); }
   if(r && r.ok){
-    toast(EDIT_ID ? 'Key updated' : 'Key generated successfully', 'ok');
+    toast(EDIT_ID ? 'Key updated' : 'Key generated', 'ok');
     closeModal('keyModal'); EDIT_ID = null;
     showView('keys'); loadKeys(); loadOverview();
   } else toast((r && r.error) || 'Failed', 'err');
@@ -1398,8 +1660,7 @@ async function loadLogs(){
       '<td>'+esc(l.tool)+'</td>' +
       '<td style="font-size:10.6px;max-width:230px;word-break:break-all">'+esc(l.query)+'</td>' +
       '<td style="font-size:10.4px">'+esc(l.ip)+'</td>' +
-      '<td><span class="badge '+(l.status==='OK'?'b-active':'b-exp')+'">'+esc(l.status)+'</span></td>' +
-    '</tr>'
+      '<td><span class="badge '+(l.status==='OK'?'b-active':'b-exp')+'">'+esc(l.status)+'</span></td></tr>'
   ).join('');
 }
 
@@ -1414,7 +1675,7 @@ async function loadRevenue(){
   drawChart('#revChart2', d.series);
 }
 
-/* ---------- DOCS (with one-click copy) ---------- */
+/* ---------- DOCS (with copy) ---------- */
 async function renderDocs(){
   if(!TOOLS.length){
     const d = await jget('/admin/api/tools');
@@ -1430,10 +1691,8 @@ async function renderDocs(){
         '<div class="u" style="flex:1;min-width:200px">GET ' + esc(fullUrl) + '</div>' +
         '<button class="copy-inline" data-copy="' + esc(fullUrl) + '">📋 COPY</button>' +
       '</div>' +
-      '<div class="d">' + esc(t.label) + ' · params: ' + esc(t.params.join(', ')) + '</div>' +
-    '</div>';
+      '<div class="d">' + esc(t.label) + ' · params: ' + esc(t.params.join(', ')) + '</div></div>';
   }).join('');
-
   document.querySelectorAll('.copy-inline').forEach(btn => {
     btn.onclick = async () => {
       await copyText(btn.dataset.copy);
@@ -1445,46 +1704,117 @@ async function renderDocs(){
   });
 }
 
-/* ---------- TELEGRAM MODAL ---------- */
-function openTelegramSetup(){
-  $('#tgModal').classList.add('show');
-  document.body.style.overflow = 'hidden';
-  refreshTelegramStatus();
-}
-async function refreshTelegramStatus(){
-  const el = $('#tgStatus');
-  el.innerHTML = '⏳ Checking...';
-  const d = await jget('/admin/api/telegram/status');
-  if(!d){ el.innerHTML = '<span style="color:#ff4d6d">Failed to check status</span>'; return; }
-  if(!d.configured){
-    el.innerHTML = '<div class="err">TELEGRAM_BOT_TOKEN not set.<br>Add it in Railway → Variables → TELEGRAM_BOT_TOKEN then redeploy.</div>';
+/* ---------- MEMBERS ---------- */
+async function loadMembers(){
+  const q = ($('#memberSearch')?.value || '').trim();
+  const d = await jget('/admin/api/members?q=' + encodeURIComponent(q));
+  if(!d || !d.ok) return;
+  const tb = $('#membersBody'); if(!tb) return;
+  if(!d.members.length){
+    tb.innerHTML = '<tr><td colspan="7" class="empty">No members yet. Use Telegram bot /generatekey to create one.</td></tr>';
     return;
   }
-  const info = (d.info && d.info.result) || {};
-  const url = info.url || '(none)';
-  const pending = info.pending_update_count || 0;
-  const lastErr = info.last_error_message;
-  const okMark = url && url.indexOf('/telegram/webhook') >= 0 ? '🟢' : '🟡';
-  el.innerHTML =
-    '<div style="font-size:11.5px;line-height:1.9">' +
-      '<div><b>Status:</b> ' + okMark + ' ' + (url ? 'Webhook installed' : 'No webhook') + '</div>' +
-      '<div><b>Webhook URL:</b> <span class="mono" style="font-size:10.5px">' + esc(url) + '</span></div>' +
-      '<div><b>Pending updates:</b> ' + pending + '</div>' +
-      (lastErr ? '<div style="color:#ffb3c1"><b>Last error:</b> ' + esc(lastErr) + '</div>' : '') +
-    '</div>';
+  tb.innerHTML = d.members.map(m =>
+    '<tr>' +
+      '<td><span class="mono">'+esc(m.username)+'</span></td>' +
+      '<td>'+esc(m.name || '—')+'</td>' +
+      '<td><span class="badge '+(m.status==='active'?'b-active':'b-susp')+'">'+esc(m.status.toUpperCase())+'</span></td>' +
+      '<td style="font-size:10.6px">'+esc((m.created_at||'').replace('T',' ').replace('+00:00',''))+'</td>' +
+      '<td style="font-size:10.6px">'+esc(m.last_login ? m.last_login.replace('T',' ').replace('+00:00','') : 'never')+'</td>' +
+      '<td style="font-size:10.6px">'+esc(m.created_by)+'</td>' +
+      '<td><button class="btn red sm" data-act="del-member" data-id="'+m.id+'">DELETE</button></td></tr>'
+  ).join('');
+  tb.querySelectorAll('button[data-act="del-member"]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm('Delete this member?')) return;
+      const r = await jsend('/admin/api/members/'+btn.dataset.id, 'DELETE', {});
+      toast(r && r.ok ? 'Member deleted' : 'Failed', r && r.ok ? 'ok' : 'err');
+      loadMembers();
+    };
+  });
 }
-async function setupTelegramWebhook(){
-  const r = await jsend('/admin/api/telegram/set-webhook', 'POST', {});
-  if(r && (r.ok || (r.result && r.result.url))){
-    toast('Webhook installed ✅','ok');
-    refreshTelegramStatus();
-  } else {
-    toast((r && r.error) || (r && r.description) || 'Failed','err');
+
+/* ---------- TELEGRAM WIZARD ---------- */
+function openTgModal(){
+  $('#tgModal').classList.add('show');
+  document.body.style.overflow = 'hidden';
+  loadTgConfig();
+}
+async function loadTgConfig(){
+  const d = await jget('/admin/api/telegram/config');
+  if(!d || !d.ok) return;
+  if(d.token){ $('#tgTokenInput').value = d.token; $('#wiz1').classList.add('done'); $('#tgTokenStatus').innerHTML = '✅ Token saved'; }
+  if(d.chat_id){ $('#tgChatInput').value = d.chat_id; $('#wiz2').classList.add('done'); $('#tgChatStatus').innerHTML = '✅ Chat ID saved'; }
+  if(d.public_url){ $('#tgPublicInput').value = d.public_url; $('#wiz3').classList.add('done'); $('#tgPublicStatus').innerHTML = '✅ URL saved'; }
+  refreshTgStatus();
+}
+async function refreshTgStatus(){
+  const d = await jget('/admin/api/telegram/status');
+  if(d && d.ok && d.configured){
+    const info = (d.info && d.info.result) || {};
+    if(info.url){
+      $('#wiz4').classList.add('done');
+      $('#tgInstallStatus').innerHTML = '✅ <b>Bot installed</b> · webhook: <span class="mono">'+esc(info.url)+'</span><br>Open Telegram → send <code>/generatekey</code>';
+    }
   }
+}
+async function saveTgToken(){
+  const token = $('#tgTokenInput').value.trim();
+  if(!token){ toast('Paste token', 'err'); return; }
+  const r = await jsend('/admin/api/telegram/save-token', 'POST', {token});
+  if(r && r.ok){
+    $('#wiz1').classList.add('done');
+    $('#tgTokenStatus').innerHTML = '✅ Verified · bot: <b>@'+esc(r.bot_username)+'</b>';
+    toast('Token saved','ok');
+  } else {
+    $('#tgTokenStatus').innerHTML = '❌ '+esc((r && r.error) || 'Failed');
+    toast('Token failed','err');
+  }
+}
+async function saveTgChat(){
+  const chat_id = $('#tgChatInput').value.trim();
+  if(!chat_id){ toast('Paste chat ID', 'err'); return; }
+  const r = await jsend('/admin/api/telegram/save-chat', 'POST', {chat_id});
+  if(r && r.ok){ $('#wiz2').classList.add('done'); $('#tgChatStatus').innerHTML = '✅ Chat ID saved'; toast('Chat ID saved','ok'); }
+  else toast((r && r.error) || 'Failed','err');
+}
+async function saveTgPublic(){
+  const url = $('#tgPublicInput').value.trim();
+  if(!url){ toast('Paste URL', 'err'); return; }
+  const r = await jsend('/admin/api/telegram/save-public', 'POST', {url});
+  if(r && r.ok){ $('#wiz3').classList.add('done'); $('#tgPublicStatus').innerHTML = '✅ URL saved'; toast('URL saved','ok'); }
+  else toast((r && r.error) || 'Failed','err');
+}
+function autofillPublic(){ $('#tgPublicInput').value = location.origin; }
+async function installBot(){
+  $('#tgInstallStatus').textContent = '⏳ Installing...';
+  const r = await jsend('/admin/api/telegram/install', 'POST', {});
+  if(r && r.ok){
+    $('#wiz4').classList.add('done');
+    $('#tgInstallStatus').innerHTML = '✅ <b>Bot installed & started!</b>' +
+      (r.test_sent ? '<br>✅ Test message sent to chat.' : '') +
+      '<br>Open Telegram → send <code>/generatekey</code>';
+    toast('Bot installed','ok');
+  } else {
+    $('#tgInstallStatus').innerHTML = '❌ ' + esc((r && r.error) || 'Failed');
+    toast('Install failed','err');
+  }
+}
+async function testBot(){
+  const r = await jsend('/admin/api/telegram/test', 'POST', {});
+  if(r && r.ok) toast('Test message sent ✅','ok');
+  else toast((r && r.error) || 'Failed','err');
 }
 
 /* ---------- INIT ---------- */
 (async function init(){
+  const me = await jget('/admin/api/me');
+  if(me && me.ok){
+    ME = me;
+    if(me.role === 'admin'){
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+    }
+  }
   const d = await jget('/admin/api/tools');
   TOOLS = (d && d.tools) ? d.tools : [];
   loadOverview();
@@ -1499,10 +1829,10 @@ init_db()
 
 if __name__ == "__main__":
     print("=" * 62)
-    print("  SHAYAN_EXPLORER · OSINT API CONTROL CENTER")
+    print("  SHAYAN_EXPLORER · OSINT API CONTROL CENTER v3")
     print(f"  DB     : {DB_PATH}")
     print("  URL    : http://127.0.0.1:5000")
     print(f"  Admin  : {ADMIN_USER} / {ADMIN_PASS}")
-    print(f"  Telegram: {'configured' if TELEGRAM_BOT_TOKEN else 'NOT configured'}")
+    print(f"  Telegram: {'configured' if get_bot_token() else 'NOT configured (set via UI)'}")
     print("=" * 62)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
