@@ -39,10 +39,10 @@ UPSTREAM_KEY  = os.environ.get("UPSTREAM_KEY", "explorer16")
 BRAND = os.environ.get("BRAND", "SHAYAN_EXPLORER")
 
 # Telegram bot settings
-TELEGRAM_BOT_TOKEN        = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_ADMIN_CHAT_ID    = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+TELEGRAM_BOT_TOKEN        = os.environ.get("TELEGRAM_BOT_TOKEN", "8378722740:AAH_isHoArOtcXGYrS247w1Em_cmGyzvP6k").strip()
+TELEGRAM_ADMIN_CHAT_ID    = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "8505747325").strip()
 TELEGRAM_WEBHOOK_SECRET   = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
-PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", "apppy-production-94474a59.up.railway.app").strip().rstrip("/")
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
